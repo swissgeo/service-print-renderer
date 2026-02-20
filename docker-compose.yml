@@ -1,0 +1,64 @@
+services:
+  localstack:
+    image: localstack/localstack
+    container_name: localstack
+    ports:
+      - "${LOCALSTACK_PORT}:4566"
+    environment:
+      - SERVICES=dynamodb,sqs
+      - DEBUG=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - network_local
+
+  init-dynamo:
+    image: amazon/aws-cli
+    command:
+      - dynamodb
+      - create-table
+      - --table-name
+      - ${DYNAMODB_TABLE_NAME}
+      - --attribute-definitions
+      - AttributeName=job_id,AttributeType=S
+      - --key-schema
+      - AttributeName=job_id,KeyType=HASH
+      - --provisioned-throughput
+      - ReadCapacityUnits=2,WriteCapacityUnits=1
+      - --endpoint-url
+      - http://localstack:4566
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+    networks:
+      - network_local
+
+  init-sqs:
+    image: amazon/aws-cli
+    command:
+      - sqs
+      - create-queue
+      - --queue-name
+      - ${SQS_QUEUE_NAME}
+      - --endpoint-url
+      - http://localstack:4566
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+    networks:
+      - network_local
+
+networks:
+  network_local:
+    driver: bridge
