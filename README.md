@@ -27,7 +27,7 @@ The service is configured by Environment Variable:
 | Env | Default | Description |
 | --- | ------- | ----------- |
 | AWS_LOCAL | `false` | Set to `true` to point AWS clients at LocalStack instead of real AWS |
-| LOCALSTACK_PORT | `4566` | Port of the LocalStack instance used in local development |
+| LOCALSTACK_ENDPOINT | `http://localhost:4566` | Endpoint URL of the LocalStack instance used in local development |
 | DYNAMODB_TABLE_NAME | `service-print-jobs-local` | The name of the DynamoDB table storing print job info |
 | SQS_QUEUE_NAME | `service-print-jobs-queue-local` | The name of the SQS queue |
 | SQS_WAIT_TIME_SECONDS | `20` | Long-polling wait time in seconds when reading from SQS |

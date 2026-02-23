@@ -13,7 +13,7 @@ if ENV_FILE:
     load_dotenv(ENV_FILE, override=True, verbose=True)
 
 
-LOCALSTACK_PORT = os.environ.get("LOCALSTACK_PORT", "4566")
+LOCALSTACK_ENDPOINT = os.environ.get("LOCALSTACK_ENDPOINT", "http://localhost:4566")
 AWS_REGION = os.environ.get("AWS_REGION", "eu-central-1")
 
 DYNAMODB_TABLE_NAME: str = str(os.environ.get("DYNAMODB_TABLE_NAME", "service-print-jobs-local"))
