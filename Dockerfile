@@ -8,6 +8,17 @@ ENV GROUP=swissgeo
 ENV INSTALL_DIR=/opt/service-print-renderer
 
 RUN apt-get -qq update > /dev/null \
+    && apt-get -qq install -y --no-install-recommends gnupg wget > /dev/null \
+    && wget -qO- https://dl-ssl.google.com/linux/linux_signing_key.pub \
+       | gpg --dearmor > /etc/apt/trusted.gpg.d/google-archive.gpg \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
+       > /etc/apt/sources.list.d/google.list \
+    && apt-get -qq update > /dev/null \
+    && apt-get -qq install -y --no-install-recommends \
+       google-chrome-stable \
+       mesa-utils \
+       mesa-utils-extra \
+       > /dev/null \
     && apt-get -qq clean \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r ${GROUP} \

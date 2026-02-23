@@ -32,8 +32,16 @@ The service is configured by Environment Variable:
 | SQS_QUEUE_NAME | `service-print-jobs-queue-local` | The name of the SQS queue |
 | SQS_WAIT_TIME_SECONDS | `20` | Long-polling wait time in seconds when reading from SQS |
 | SQS_MAX_MESSAGES | `1` | Maximum number of messages to retrieve per SQS poll |
-| AWS_CONNECT_TIMEOUT | `5` | Timeout in seconds for establishing a connection to DynamoDB/SQS |
-| AWS_READ_TIMEOUT | `30` | Timeout in seconds for reading a response from DynamoDB/SQS |
+| AWS_CONNECT_TIMEOUT | `5` | Timeout in seconds for establishing a connection to DynamoDB/SQS/S3 |
+| AWS_READ_TIMEOUT | `30` | Timeout in seconds for reading a response from DynamoDB/SQS/S3 |
+| S3_BUCKET_NAME | `service-print-jobs-local` | S3 bucket where rendered PDFs are stored |
+| VIEWER_URL_MAP_RASTER | - | Webmapviewer endpoint for raster map printing |
+| VIEWER_URL_MAP | - | Webmapviewer endpoint for vector-tile map printing |
+| VIEWER_URL_LEGEND | - | Webmapviewer endpoint for legend printing |
+| VECTOR_TILES | `false` | Set to `true` to use the vector-tile viewer URL instead of the raster one |
+| TIMEOUT_LOADING_WEB_PAGE | `30000` | Browser page-load timeout in milliseconds |
+| ROUND_UP_TO_NEXT_Z_INT | `true` | Round the interpolated zoom level up to the next integer for better raster quality |
+| GO_ONE_Z_FURTHER | `false` | Use one zoom level higher than calculated (e.g. to force pk25 at scale 25000) |
 
 ### OpenTelemetry (tracing)
 

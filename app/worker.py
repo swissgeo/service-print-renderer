@@ -10,6 +10,8 @@ Entry point: python -m app.worker
 import logging
 import signal
 import sys
+import tempfile
+from pathlib import Path
 
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, StatusCode
@@ -17,6 +19,8 @@ from opentelemetry.trace import SpanKind, StatusCode
 from app.config.settings import SQS_ERROR_STATUS_MIN_RECEIVE_COUNT
 from app.helpers.dynamo_db import update_job_status
 from app.helpers.otel import initialize, setup_trace_provider, traced
+from app.helpers.printing import render_to_pdf
+from app.helpers.s3 import upload_pdf
 from app.helpers.sqs_queue import (
     delete_message,
     make_message_visible,
@@ -38,28 +42,36 @@ def _handle_signal(signum: int, _frame: object) -> None:
 
 
 @traced("worker.process_job")
-def process_job(job: dict) -> None:
+def process_job(job: dict) -> str:
     """
-    Process a single print job received from SQS.
+    Render a single print job and upload the result to S3.
 
     Args:
         job: The deserialized job dict (as stored in DynamoDB / sent to SQS
              by service-print-api).
+
+    Returns:
+        The S3 URL of the generated PDF.
     """
     job_id: str = job["job_id"]
+    payload: dict = job["payload"]
     trace.get_current_span().set_attribute("job.id", job_id)
     logger.info("Processing job %s", job_id)
 
-    # Mark job as started
     update_job_status(
         job_id,
         "started",
         started_timestamp_iso_8601=get_iso_8601_timestamp(),
     )
 
-    # TODO: implement actual rendering logic here
-    # For now just mark as done with a placeholder
-    raise NotImplementedError("Rendering logic not yet implemented")
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        pdf_path = Path(tmp.name)
+
+    try:
+        render_to_pdf(payload, pdf_path)
+        return upload_pdf(job_id, pdf_path)
+    finally:
+        pdf_path.unlink(missing_ok=True)
 
 
 @traced("worker.handle_message", kind=SpanKind.CONSUMER)
@@ -71,28 +83,15 @@ def handle_message(job_id: str, receipt_handle: str, job: dict, receive_count: i
     trace.get_current_span().set_attribute("job.id", job_id)
     trace.get_current_span().set_attribute("messaging.receive_count", receive_count)
     try:
-        process_job(job)
-        # Job rendered successfully
+        pdf_url = process_job(job)
         update_job_status(
             job_id,
             "finished",
             finished_timestamp_iso_8601=get_iso_8601_timestamp(),
+            pdf_url=pdf_url,
         )
         delete_message(receipt_handle)
         logger.info("Job %s completed successfully", job_id)
-    except NotImplementedError:
-        # Rendering not yet implemented — mark as error and delete
-        logger.warning("Job %s: rendering not yet implemented", job_id)
-        trace.get_current_span().set_status(StatusCode.ERROR, "Rendering not yet implemented")
-        update_job_status(
-            job_id,
-            "error",
-            finished_timestamp_iso_8601=get_iso_8601_timestamp(),
-            message="Rendering not yet implemented",
-        )
-        delete_message(receipt_handle)
-    # TODO maybe it would be better to have a handler that treats the DLQ and updates
-    # the dynamodb with error and the timestamp
     except Exception as exc:
         logger.exception("Job %s failed during processing", job_id)
         trace.get_current_span().set_status(StatusCode.ERROR, str(exc))
@@ -103,8 +102,10 @@ def handle_message(job_id: str, receipt_handle: str, job: dict, receive_count: i
                 finished_timestamp_iso_8601=get_iso_8601_timestamp(),
                 message="Internal rendering error",
             )
-        # Make the message immediately visible again for retry
-        make_message_visible(receipt_handle)
+            delete_message(receipt_handle)
+        else:
+            # Make the message immediately visible again for retry
+            make_message_visible(receipt_handle)
 
 
 def run() -> None:
