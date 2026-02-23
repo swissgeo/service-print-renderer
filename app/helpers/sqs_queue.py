@@ -9,9 +9,9 @@ from botocore.exceptions import ClientError, ConnectTimeoutError, ReadTimeoutErr
 
 from app.config.settings import (
     AWS_CONNECT_TIMEOUT,
-    AWS_DEFAULT_REGION,
     AWS_LOCAL,
     AWS_READ_TIMEOUT,
+    AWS_REGION,
     LOCALSTACK_PORT,
     SQS_MAX_MESSAGES,
     SQS_QUEUE_NAME,
@@ -44,7 +44,7 @@ def get_sqs_client() -> SQSClient:
             sqs = boto3.client(
                 "sqs",
                 endpoint_url=f"http://localhost:{LOCALSTACK_PORT}",
-                region_name=AWS_DEFAULT_REGION,
+                region_name=AWS_REGION,
                 config=boto_config,
             )
         else:
@@ -56,6 +56,7 @@ def get_sqs_client() -> SQSClient:
         return sqs
 
 
+@lru_cache(maxsize=1)
 def get_queue_url() -> str:
     """Returns the URL of the configured SQS queue."""
     sqs = get_sqs_client()

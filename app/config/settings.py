@@ -14,7 +14,7 @@ if ENV_FILE:
 
 
 LOCALSTACK_PORT = os.environ.get("LOCALSTACK_PORT", "4566")
-AWS_DEFAULT_REGION = os.environ.get("AWS_DEFAULT_REGION", "eu-central-1")
+AWS_REGION = os.environ.get("AWS_REGION", "eu-central-1")
 
 DYNAMODB_TABLE_NAME: str = str(os.environ.get("DYNAMODB_TABLE_NAME", "service-print-jobs-local"))
 SQS_QUEUE_NAME: str = str(os.environ.get("SQS_QUEUE_NAME", "service-print-jobs-queue-local"))

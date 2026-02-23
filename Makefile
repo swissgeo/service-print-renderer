@@ -30,7 +30,7 @@ DOCKER_REGISTRY = 074597099015.dkr.ecr.eu-central-1.amazonaws.com
 DOCKER_IMG_LOCAL_TAG := $(DOCKER_REGISTRY)/swissgeo/$(SERVICE_NAME):local-$(USER)-$(GIT_HASH_SHORT)
 
 # AWS variables
-AWS_DEFAULT_REGION = eu-central-1
+AWS_REGION = eu-central-1
 
 # Env file for dockerrun, defaults to .env.local / .env
 ENV_FILE ?= $(if $(wildcard .env.local),.env.local,.env)
@@ -66,9 +66,8 @@ ci: .env
 .PHONY: setup
 setup: .env $(LOGS_DIR) ## Create virtualenv with all packages for development
 	uv sync
-	# Start a new zsh shell with the virtualenv activated and the .env file loaded into the environment
-	uv run zsh
-
+	# Start a new shell with the virtualenv activated and the .env file loaded into the environment
+	uv run $$SHELL
 
 .PHONY: format
 format: ## Call ruff format to make sure your code is easier to read and respects some conventions.
@@ -93,7 +92,7 @@ run: ## Run the worker locally
 
 .PHONY: dockerlogin
 dockerlogin: ## Login to the AWS Docker Registry (ECR)
-	aws --profile swisstopo-swissgeo-builder ecr get-login-password --region $(AWS_DEFAULT_REGION) | docker login --username AWS --password-stdin $(DOCKER_REGISTRY)
+	aws --profile swisstopo-swissgeo-builder ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(DOCKER_REGISTRY)
 
 
 .PHONY: dockerbuild
