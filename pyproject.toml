@@ -1,0 +1,131 @@
+[project]
+name = "service-print-renderer"
+version = "0.0.0" # NOTE: the version is not used
+description = "The worker that consumes print jobs from SQS and updates DynamoDB"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "boto3~=1.42",
+    "ecs-logging~=2.2",
+    "logging-utilities~=5.3",
+    "python-dotenv~=1.2",
+    "pyyaml~=6.0",
+    "types-pyyaml~=6.0",
+    # OpenTelemetry packages
+    "opentelemetry-sdk~=1.39",
+    "opentelemetry-exporter-otlp~=1.39",
+    "opentelemetry-instrumentation-logging==0.60b1",
+    "opentelemetry-instrumentation-botocore==0.60b1",
+]
+
+[dependency-groups]
+dev = [
+    "debugpy",
+    "ty",
+    "pytest",
+    "pytest-cov",
+    "pytest-xdist",
+    "ruff>=0.14",
+    "boto3-stubs[dynamodb,sqs]~=1.42",
+]
+
+[tool.uv]
+package = false # Do not install as a package
+
+
+#===============================================================================
+# ty configuration
+[tool.ty.environment]
+root = ["."]
+
+[tool.ty.src]
+exclude = ["app/tests"]
+
+#===============================================================================
+# Ruff configuration
+[tool.ruff]
+src = ["app"]
+
+# Same as Black.
+line-length = 100
+indent-width = 4
+
+# Assume Python 3.14
+target-version = "py314"
+
+#------------------------------------------------------------------------------
+# Linting configuration
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "ANN401", # Ignore Any typehint
+    "ANN002", # Ignore typehint for *args
+    "ANN003", # Ignore typehint for **kwargs
+    "D",      # Ignore pydocstyle
+    "EM",     # Ignore flake8-errmsg
+    "TRY003", # Ignore long messages in exception constructors
+    "FBT001", # Ignore boolean-type-hint-positional-argument
+    "FBT002", # Ignore boolean-default-value-positional-argument
+    "PTH123", # Ignore builtin-open
+    "TD",     # Ignore flake8-todos
+    "FIX",    # Ignore fixme comments
+    "COM812", # flak8-commas missing-trailing-comma is ignored to avoid conflict with formatter which enforces trailing commas
+]
+
+# Allow fix for all enabled rules (when `--fix`) is provided.
+unfixable = []
+
+fixable = ["ALL"]
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+#------------------------------------------------------------------------------
+# ruff ignore per files
+[tool.ruff.lint.per-file-ignores]
+
+"app/helpers/otel.py" = [
+    "PLC0415",  # Lazy imports are intentional (OTEL bootstrapping order)
+]
+
+"app/tests/**" = [
+    "S101",    # Ignore usage of assert statements in tests
+    "ANN201",  # Ignore missing return type hints in tests
+    "INP001",  # Ignore implicit namespace packages in tests
+    "ANN001",  # Ignore missing type hints in tests
+    "ARG001",  # Ignore unused function arguments in tests
+    "ARG005",  # Ignore unused lambda argument in tests
+    "PLR2004", # Ignore magic number in tests
+]
+
+"app/*.py" = [
+    "INP001", # Ignore implicit namespace packages in root app files
+]
+
+#------------------------------------------------------------------------------
+# Isort configuration
+[tool.ruff.lint.isort]
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "test",
+    "first-party",
+    "local-folder",
+]
+
+[tool.ruff.lint.isort.sections]
+test = ["pytest"]
+
+#===============================================================================
+# Pytest configuration
+[tool.pytest]
+pythonpath = ["app"]
+python_files = ["test_*.py"]
+
+#==============================================================================
+# Coverage configuration
+[tool.coverage.run]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = ["if TYPE_CHECKING:"]
