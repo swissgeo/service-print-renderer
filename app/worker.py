@@ -7,6 +7,7 @@ and updates the corresponding DynamoDB items with the result.
 Entry point: python -m app.worker
 """
 
+import argparse
 import logging
 import signal
 import sys
@@ -22,6 +23,7 @@ from app.config.settings import (
     STARTUP_PROBE_FILE,
 )
 from app.helpers.dynamo_db import update_job_status
+from app.helpers.gpu_info import log_gpu_info
 from app.helpers.otel import initialize, setup_trace_provider, traced
 from app.helpers.printing import render_to_pdf
 from app.helpers.s3 import upload_pdf
@@ -157,7 +159,21 @@ def run() -> None:
 
 
 if __name__ == "__main__":
+    _parser = argparse.ArgumentParser(description="service-print-renderer worker")
+    _parser.add_argument(
+        "-i",
+        "--renderer-info",
+        action="store_true",
+        default=False,
+        help="Print GPU/WebGL renderer info and exit",
+    )
+    _args = _parser.parse_args()
+
     init_logging()
+
+    if _args.renderer_info:
+        log_gpu_info()
+
     initialize()
     setup_trace_provider()
 

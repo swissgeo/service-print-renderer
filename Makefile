@@ -90,6 +90,11 @@ run: ## Run the worker locally
 	ENV_FILE=.env $(UV_RUN) python -m app.worker
 
 
+.PHONY: renderer-info
+renderer-info: ## Print GPU/WebGL renderer info and exit
+	ENV_FILE=.env $(UV_RUN) python -m app.worker --renderer-info
+
+
 .PHONY: dockerlogin
 dockerlogin: ## Login to the AWS Docker Registry (ECR)
 	aws --profile swisstopo-swissgeo-builder ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(DOCKER_REGISTRY)

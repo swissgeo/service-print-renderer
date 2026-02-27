@@ -20,6 +20,8 @@
   - [Kubernetes probes](#kubernetes-probes)
   - [OpenTelemetry (tracing)](#opentelemetry-tracing)
     - [Local tracing setup](#local-tracing-setup)
+- [Debugging](#debugging)
+  - [WebGL renderer info](#webgl-renderer-info)
 
 ## Summary Of The Project
 
@@ -175,3 +177,16 @@ docker compose -f docker-compose-otel.yml up -d
 ```
 
 Then start the app with `make run`. Traces are visible at **<http://localhost:9411>** (Zipkin UI).
+
+## Debugging
+
+### WebGL renderer info
+
+To verify that headless Chrome can access WebGL and report the expected renderer, run the worker with the `-i` / `--renderer-info` flag:
+
+```bash
+make renderer-info
+# or directly: uv run python -m app.worker --renderer-info
+```
+
+This launches a headless Chrome instance, evaluates a WebGL probe, logs the hardware-acceleration status and the renderer name, then exits. No queue polling or AWS calls are made.
