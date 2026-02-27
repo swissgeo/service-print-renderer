@@ -173,6 +173,7 @@ if __name__ == "__main__":
 
     if _args.renderer_info:
         log_gpu_info()
+        sys.exit(0)
 
     initialize()
     setup_trace_provider()

@@ -125,6 +125,7 @@ The service is configured entirely via environment variables:
 | `TIMEOUT_LOADING_WEB_PAGE` | `30000` | Browser page-load timeout in milliseconds |
 | `ROUND_UP_TO_NEXT_Z_INT` | `true` | Round the interpolated zoom level up to the next z (integer) for sharper raster tiles |
 | `GO_ONE_Z_FURTHER` | `false` | Use one zoom level higher than calculated (e.g. to force pk25 at scale 1:25 000) |
+| `USE_GPU` | `false` | Set to `true` to use the local machine's GPU (native OpenGL) instead of the SwiftShader software rasterizer — for local development only |
 
 ### Kubernetes probes
 

@@ -54,12 +54,17 @@ TIMEOUT_LOADING_WEB_PAGE: int = int(os.environ.get("TIMEOUT_LOADING_WEB_PAGE", "
 ROUND_UP_TO_NEXT_Z_INT: bool = os.environ.get("ROUND_UP_TO_NEXT_Z_INT", "true").lower() == "true"
 GO_ONE_Z_FURTHER: bool = os.environ.get("GO_ONE_Z_FURTHER", "false").lower() == "true"
 
-# Chrome launch flags for headless rendering
+# Chrome launch flags for headless rendering.
+# USE_GPU=true switches to ANGLE over Vulkan (uses system GPU via nvidia_icd / mesa).
+# Default (false) uses ANGLE over SwiftShader software rasterizer for CI/containers.
+_USE_GPU: bool = os.environ.get("USE_GPU", "false").lower() == "true"
 BROWSER_LAUNCH_ARGS: list[str] = [
-    "--use-gl=angle",
-    "--use-angle=swiftshader",
+    *(
+        ["--use-gl=angle", "--use-angle=vulkan", "--ozone-platform=wayland"]
+        if _USE_GPU
+        else ["--use-gl=angle", "--use-angle=swiftshader", "--disable-software-rasterizer"]
+    ),
     "--enable-webgl",
-    "--disable-software-rasterizer",
     "--no-sandbox",
     "--disable-gpu-sandbox",
 ]
