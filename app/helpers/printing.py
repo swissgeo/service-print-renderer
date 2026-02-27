@@ -1,13 +1,16 @@
 """Playwright-based PDF rendering via headless Chrome."""
 
+import contextlib
 import logging
 import math
 import re
+import time
 from typing import TYPE_CHECKING
 
 from playwright.sync_api import Error, sync_playwright
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
     from playwright.sync_api import BrowserContext, Page, Playwright
@@ -29,6 +32,17 @@ logger = logging.getLogger(__name__)
 
 _CHROME_EXECUTABLE = "/usr/bin/google-chrome"
 _CHROME_USER_DATA_DIR = "/tmp/user_data"  # nosec B108  # noqa: S108
+
+
+@contextlib.contextmanager
+def _timed(label: str) -> Generator:
+    """Log the elapsed wall-clock time of the wrapped block at DEBUG level."""
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = time.perf_counter() - start
+        logger.debug("%s took %.3fs", label, elapsed)
 
 
 def _remove_z_param(query: str) -> str:
@@ -232,9 +246,13 @@ def render_to_pdf(payload: dict, output_path: Path) -> None:
 
     manager = ChromeBrowserManager(payload)
     try:
-        url = manager.build_url()
-        manager.navigate_to_url(url)
-        manager.save_page_as_pdf(output_path)
+        with _timed("render_to_pdf total"):
+            with _timed("build_url"):
+                url = manager.build_url()
+            with _timed("navigate_to_url"):
+                manager.navigate_to_url(url)
+            with _timed("save_page_as_pdf"):
+                manager.save_page_as_pdf(output_path)
     except Error as exc:
         logger.exception("Playwright error during rendering")
         msg = "PDF rendering failed"
