@@ -48,7 +48,7 @@ services:
       - --queue-name
       - ${SQS_QUEUE_NAME}
       - --endpoint-url
-      - ${LOCALSTACK_ENDPOINT}
+      - http://localstack:${LOCALSTACK_PORT}
     depends_on:
       localstack:
         condition: service_healthy
@@ -79,6 +79,23 @@ services:
       - AWS_REGION=${AWS_REGION}
     networks:
       - network_local
+
+  renderer-info:
+    profiles: [renderer-info]
+    build:
+      context: .
+      target: production
+    command: ["-m", "app.worker", "--renderer-info"]
+    env_file: ${ENV_FILE:-.env}
+    environment:
+      - WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
+    volumes:
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/${WAYLAND_DISPLAY:-wayland-0}:/run/user/1000/${WAYLAND_DISPLAY:-wayland-0}
+    devices:
+      - /dev/nvidia0:/dev/nvidia0
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-modeset:/dev/nvidia-modeset
+      - /dev/dri:/dev/dri
 
 networks:
   network_local:

@@ -22,7 +22,8 @@ RUN apt-get -qq update > /dev/null \
     && apt-get -qq clean \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r ${GROUP} \
-    && useradd -r -s /bin/false -g ${GROUP} ${USER}
+    && useradd -r -m -s /bin/false -g ${GROUP} ${USER} \
+    && mkdir -p /home/${USER} && chown ${USER}:${GROUP} /home/${USER}
 
 ###########################################################
 # Builder container

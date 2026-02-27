@@ -56,17 +56,19 @@ GO_ONE_Z_FURTHER: bool = os.environ.get("GO_ONE_Z_FURTHER", "false").lower() == 
 
 # Chrome launch flags for headless rendering.
 # USE_GPU=true switches to ANGLE over Vulkan (uses system GPU via nvidia_icd / mesa).
-# Default (false) uses ANGLE over SwiftShader software rasterizer for CI/containers.
+# Default (false) uses ANGLE over SwiftShader for CI/containers (no GPU required).
 _USE_GPU: bool = os.environ.get("USE_GPU", "false").lower() == "true"
 BROWSER_LAUNCH_ARGS: list[str] = [
     *(
-        ["--use-gl=angle", "--use-angle=vulkan", "--ozone-platform=wayland"]
+        ["--use-gl=angle", "--use-angle=vulkan"]
         if _USE_GPU
-        else ["--use-gl=angle", "--use-angle=swiftshader", "--disable-software-rasterizer"]
+        else ["--use-gl=angle", "--use-angle=swiftshader"]
     ),
+    # --ozone-platform=wayland is only needed when a Wayland display is available
+    *(["--ozone-platform=wayland"] if os.environ.get("WAYLAND_DISPLAY") else []),
     "--enable-webgl",
-    "--no-sandbox",
-    "--disable-gpu-sandbox",
+    "--no-sandbox",  # covers GPU sandbox too; --disable-gpu-sandbox is redundant
+    "--disable-dev-shm-usage",  # prevents Chrome from crashing on limited /dev/shm in Docker
 ]
 
 # Paper sizes at 96 dpi (width, height) in pixels — portrait orientation
