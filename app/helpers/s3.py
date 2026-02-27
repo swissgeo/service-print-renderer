@@ -20,6 +20,7 @@ from app.config.settings import (
     AWS_REGION,
     LOCALSTACK_ENDPOINT,
     S3_BUCKET_NAME,
+    S3_PRESIGNED_URL_EXPIRY,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,15 @@ def upload_pdf(job_id: str, pdf_path: Path) -> str:
         logger.exception("Error uploading PDF for job %s to S3", job_id)
         raise
 
-    if AWS_LOCAL:
-        return f"{LOCALSTACK_ENDPOINT}/{S3_BUCKET_NAME}/{key}"
-    return f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{key}"
+    presigned_url: str = s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": S3_BUCKET_NAME, "Key": key},
+        ExpiresIn=S3_PRESIGNED_URL_EXPIRY,
+    )
+    logger.debug(
+        "Generated presigned URL for job %s (expires in %ds): %s",
+        job_id,
+        S3_PRESIGNED_URL_EXPIRY,
+        presigned_url,
+    )
+    return presigned_url

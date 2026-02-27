@@ -34,3 +34,25 @@ def get_iso_8601_timestamp() -> str:
     """Returns the current UTC time as an ISO 8601 string."""
     now_utc = datetime.datetime.now(datetime.UTC)
     return now_utc.isoformat()
+
+
+def create_probe_file(file_path: str) -> None:
+    """Create or touch a probe file to signal readiness or liveness."""
+    if not file_path:
+        return
+    try:
+        Path(file_path).touch()
+        logger.debug("Probe file created/updated: %s", file_path)
+    except OSError:
+        logger.exception("Error creating probe file: %s", file_path)
+
+
+def remove_probe_file(file_path: str) -> None:
+    """Remove a probe file if it exists."""
+    if not file_path:
+        return
+    try:
+        Path(file_path).unlink(missing_ok=True)
+        logger.debug("Probe file removed: %s", file_path)
+    except OSError:
+        logger.exception("Error removing probe file: %s", file_path)

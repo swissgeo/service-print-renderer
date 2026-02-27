@@ -22,6 +22,10 @@ SQS_QUEUE_NAME: str = str(os.environ.get("SQS_QUEUE_NAME", "service-print-jobs-q
 AWS_CONNECT_TIMEOUT: int = int(os.environ.get("AWS_CONNECT_TIMEOUT", "5"))
 AWS_READ_TIMEOUT: int = int(os.environ.get("AWS_READ_TIMEOUT", "30"))
 
+# Kubernetes probe files
+STARTUP_PROBE_FILE: str = os.environ.get("STARTUP_PROBE_FILE", "/tmp/startup_probe")  # noqa: S108
+LIVENESS_PROBE_FILE: str = os.environ.get("LIVENESS_PROBE_FILE", "/tmp/liveness_probe")  # noqa: S108
+
 # SQS polling configuration
 SQS_WAIT_TIME_SECONDS: int = int(os.environ.get("SQS_WAIT_TIME_SECONDS", "20"))
 SQS_MAX_MESSAGES: int = int(os.environ.get("SQS_MAX_MESSAGES", "1"))
@@ -37,6 +41,7 @@ if AWS_LOCAL:
 
 # S3
 S3_BUCKET_NAME: str = os.environ.get("S3_BUCKET_NAME", "service-print-pdf-local")
+S3_PRESIGNED_URL_EXPIRY: int = int(os.environ.get("S3_PRESIGNED_URL_EXPIRY", "3600"))
 
 # Webmapviewer endpoints
 VIEWER_URL_MAP_RASTER: str = os.environ.get("VIEWER_URL_MAP_RASTER", "")
