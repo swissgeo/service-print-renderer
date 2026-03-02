@@ -42,13 +42,15 @@ services:
 
   init-sqs:
     image: amazon/aws-cli
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - sqs
-      - create-queue
-      - --queue-name
-      - ${SQS_QUEUE_NAME}
-      - --endpoint-url
-      - http://localstack:${LOCALSTACK_PORT}
+      - |
+        aws sqs create-queue --queue-name ${SQS_DL_QUEUE_NAME} --endpoint-url http://localstack:${LOCALSTACK_PORT}
+        DLQ_ARN="arn:aws:sqs:${AWS_REGION}:000000000000:${SQS_DL_QUEUE_NAME}"
+        aws sqs create-queue \
+          --queue-name ${SQS_QUEUE_NAME} \
+          --endpoint-url http://localstack:${LOCALSTACK_PORT} \
+          --attributes "RedrivePolicy={\"deadLetterTargetArn\":\"${DLQ_ARN}\",\"maxReceiveCount\":\"${SQS_MAX_RECEIVE_COUNT}\"},VisibilityTimeout=${SQS_VISIBILITY_TIMEOUT}"
     depends_on:
       localstack:
         condition: service_healthy
@@ -56,6 +58,8 @@ services:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_REGION=${AWS_REGION}
+      - SQS_MAX_RECEIVE_COUNT=${SQS_MAX_RECEIVE_COUNT}
+      - SQS_VISIBILITY_TIMEOUT=${SQS_VISIBILITY_TIMEOUT}
     networks:
       - network_local
 

@@ -19,7 +19,7 @@ from opentelemetry.trace import SpanKind, StatusCode
 
 from app.config.settings import (
     LIVENESS_PROBE_FILE,
-    SQS_ERROR_STATUS_MIN_RECEIVE_COUNT,
+    SQS_MAX_RECEIVE_COUNT,
     STARTUP_PROBE_FILE,
 )
 from app.helpers.dynamo_db import update_job_status
@@ -29,9 +29,9 @@ from app.helpers.printing import render_to_pdf
 from app.helpers.s3 import upload_pdf
 from app.helpers.sqs_queue import (
     delete_message,
-    make_message_visible,
     parse_message_body,
     receive_messages,
+    send_to_dlq,
 )
 from app.helpers.utils import (
     create_probe_file,
@@ -90,6 +90,9 @@ def handle_message(job_id: str, receipt_handle: str, job: dict, receive_count: i
     """
     Handle a single SQS message end-to-end: render the job, update its final
     status in DynamoDB and delete the message from the queue on success.
+    On failure the message is not deleted — SQS will redeliver it until
+    maxReceiveCount is reached, then move it to the DLQ automatically.
+    DynamoDB is only updated to 'error' on the final attempt.
     """
     trace.get_current_span().set_attribute("job.id", job_id)
     trace.get_current_span().set_attribute("messaging.receive_count", receive_count)
@@ -106,19 +109,15 @@ def handle_message(job_id: str, receipt_handle: str, job: dict, receive_count: i
     except Exception as exc:
         logger.exception("Job %s failed during processing", job_id)
         trace.get_current_span().set_status(StatusCode.ERROR, str(exc))
-        # TODO: If we work with a DLQ we won't have to use the counter
-        # as the queue will handle this
-        if receive_count >= SQS_ERROR_STATUS_MIN_RECEIVE_COUNT:
+        if receive_count >= SQS_MAX_RECEIVE_COUNT:
             update_job_status(
                 job_id,
                 "error",
                 finished_timestamp_iso_8601=get_iso_8601_timestamp(),
                 message="Internal rendering error",
             )
-            delete_message(receipt_handle)
-        else:
-            # Make the message immediately visible again for retry
-            make_message_visible(receipt_handle)
+            # Do not delete — let the visibility timeout expire so SQS
+            # moves the message to the DLQ via the redrive policy.
 
 
 def run() -> None:
@@ -144,12 +143,11 @@ def run() -> None:
                 job = parse_message_body(message)
                 job_id: str = job["job_id"]
             except KeyError, ValueError:
-                # Do not delete — let SQS redrive policy move it to the DLQ
-                # after maxReceiveCount is reached.
-                # TODO: do we want to send it directly or do we let the SQS queue take care?
                 logger.exception(
-                    "Malformed SQS message, will be routed to DLQ: %s", message.get("Body")
+                    "Malformed SQS message, sending directly to DLQ: %s", message.get("Body")
                 )
+                send_to_dlq(message.get("Body", ""))
+                delete_message(receipt_handle)
                 continue
 
             handle_message(job_id, receipt_handle, job, receive_count)

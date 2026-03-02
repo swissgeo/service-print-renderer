@@ -29,7 +29,7 @@
 
 When `service-print-api` receives a print request from a client, it enqueues a job to SQS and returns a job ID. The renderer continuously polls that queue, picks up pending jobs one at a time, launches a headless Chrome browser via [Playwright](https://playwright.dev/python/), renders the webmapviewer page as a PDF, uploads it to S3, and updates the job status in DynamoDB. The `pdf_url` stored in DynamoDB is an S3 presigned URL valid for `S3_PRESIGNED_URL_EXPIRY` seconds. Clients can then query `service-print-api` with the job ID to check the status and retrieve the resulting document once it is ready.
 
-Malformed SQS messages (unparseable body or missing `job_id`) are not deleted by the worker. Instead they are left in the queue so that SQS can apply the configured **redrive policy**: once a message has been received `maxReceiveCount` times without being deleted, SQS moves it automatically to the dead-letter queue (DLQ).
+Malformed SQS messages (unparseable body or missing `job_id`) are forwarded directly to the dead-letter queue (DLQ) and then deleted from the main queue. Failed rendering jobs are not deleted — the worker lets the visibility timeout (`SQS_VISIBILITY_TIMEOUT`) expire so SQS redelivers the message and retries up to `SQS_MAX_RECEIVE_COUNT` times. Only on the final attempt is the job marked as `error` in DynamoDB; SQS then routes the message to the DLQ automatically via the redrive policy.
 
 ## Technologies
 
@@ -74,7 +74,7 @@ This runs `docker compose up -d` which starts LocalStack and the following init 
 | Container | Action |
 | --------- | ------ |
 | `init-dynamo` | Creates the DynamoDB table (`DYNAMODB_TABLE_NAME`) |
-| `init-sqs` | Creates the SQS queue (`SQS_QUEUE_NAME`) |
+| `init-sqs` | Creates the DLQ (`SQS_DL_QUEUE_NAME`) and the main SQS queue (`SQS_QUEUE_NAME`) with a redrive policy pointing to the DLQ |
 | `init-s3` | Creates the S3 bucket (`S3_BUCKET_NAME`) |
 
 To verify the S3 bucket was created:
@@ -113,9 +113,11 @@ The service is configured entirely via environment variables:
 | `AWS_READ_TIMEOUT` | `30` | Timeout in seconds for reading a response from AWS services |
 | `DYNAMODB_TABLE_NAME` | `service-print-jobs-local` | DynamoDB table storing print job status |
 | `SQS_QUEUE_NAME` | `service-print-jobs-queue-local` | SQS queue name |
+| `SQS_DL_QUEUE_NAME` | `service-print-jobs-dlq-local` | SQS dead-letter queue name |
+| `SQS_MAX_RECEIVE_COUNT` | `3` | Number of times a message can be received before SQS routes it to the DLQ automatically |
+| `SQS_VISIBILITY_TIMEOUT` | `60` | How long (in seconds) a received message is hidden from other consumers; after expiry SQS redelivers it (or routes to DLQ if `maxReceiveCount` is reached) |
 | `SQS_WAIT_TIME_SECONDS` | `20` | Long-polling wait time in seconds when reading from SQS |
 | `SQS_MAX_MESSAGES` | `1` | Maximum number of messages to retrieve per SQS poll |
-| `SQS_ERROR_STATUS_MIN_RECEIVE_COUNT` | `2` | Minimum receive count before a job is marked as error and removed from the queue |
 | `S3_BUCKET_NAME` | `service-print-jobs-local` | S3 bucket where rendered PDFs are stored |
 | `S3_PRESIGNED_URL_EXPIRY` | `3600` | Validity of the S3 presigned URL stored in DynamoDB as `pdf_url`, in seconds |
 | `VIEWER_URL_MAP_RASTER` | — | Webmapviewer endpoint for raster map printing (**required**) |

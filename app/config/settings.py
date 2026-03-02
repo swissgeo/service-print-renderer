@@ -18,6 +18,7 @@ AWS_REGION = os.environ.get("AWS_REGION", "eu-central-1")
 
 DYNAMODB_TABLE_NAME: str = str(os.environ.get("DYNAMODB_TABLE_NAME", "service-print-jobs-local"))
 SQS_QUEUE_NAME: str = str(os.environ.get("SQS_QUEUE_NAME", "service-print-jobs-queue-local"))
+SQS_DL_QUEUE_NAME: str = str(os.environ.get("SQS_DL_QUEUE_NAME", "service-print-jobs-dlq-local"))
 
 AWS_CONNECT_TIMEOUT: int = int(os.environ.get("AWS_CONNECT_TIMEOUT", "5"))
 AWS_READ_TIMEOUT: int = int(os.environ.get("AWS_READ_TIMEOUT", "30"))
@@ -29,9 +30,8 @@ LIVENESS_PROBE_FILE: str = os.environ.get("LIVENESS_PROBE_FILE", "/tmp/liveness_
 # SQS polling configuration
 SQS_WAIT_TIME_SECONDS: int = int(os.environ.get("SQS_WAIT_TIME_SECONDS", "20"))
 SQS_MAX_MESSAGES: int = int(os.environ.get("SQS_MAX_MESSAGES", "1"))
-SQS_ERROR_STATUS_MIN_RECEIVE_COUNT: int = int(
-    os.environ.get("SQS_ERROR_STATUS_MIN_RECEIVE_COUNT", "2")
-)
+SQS_MAX_RECEIVE_COUNT: int = int(os.environ.get("SQS_MAX_RECEIVE_COUNT", "3"))
+SQS_VISIBILITY_TIMEOUT: int = int(os.environ.get("SQS_VISIBILITY_TIMEOUT", "60"))
 
 # AWS_LOCAL
 AWS_LOCAL: bool = os.environ.get("AWS_LOCAL", "false").lower() == "true"
