@@ -3,15 +3,17 @@
 import contextlib
 import logging
 import math
-import re
 import time
 from typing import TYPE_CHECKING
+from urllib.parse import parse_qsl, urlencode
 
 from playwright.sync_api import Error, sync_playwright
 
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
+    from types import TracebackType
+    from typing import Self
 
     from playwright.sync_api import BrowserContext, Page, Playwright
 
@@ -51,7 +53,8 @@ def _remove_z_param(query: str) -> str:
     The zoom level is recalculated from the scale denominator, so any
     z already present in the client query must be removed first.
     """
-    return re.sub(r"([?&])z=\d+(\.\d+)?", r"\1", query)
+    params = parse_qsl(query, keep_blank_values=True)
+    return urlencode([(k, v) for k, v in params if k != "z"])
 
 
 class ChromeBrowserManager:
@@ -63,10 +66,11 @@ class ChromeBrowserManager:
 
     def __init__(self, payload: dict) -> None:
         self._payload = payload
-        paper_size: str = str(payload["format"]).lower()
+        self._playwright = None
+        self._browser = None
+        self._page = None
 
-        self._playwright = sync_playwright().start()
-
+        self._paper_size: str = str(payload["format"]).lower()
         self._denom = int(payload["scale"])
         self._resolution = int(payload.get("resolution", 96)) or 96
         self._dpi = self._resolution  # may be overridden below
@@ -85,31 +89,42 @@ class ChromeBrowserManager:
 
         self._scale = 96 / self._dpi
         orientation_code = "L" if payload["orientation"] == "landscape" else "P"
-        self._print_config = f"{paper_size}_{orientation_code},{self._dpi}".upper()
+        self._print_config = f"{self._paper_size}_{orientation_code},{self._dpi}".upper()
 
         if payload["orientation"] == "portrait":
-            width, height = PAPER_SIZES[paper_size]
+            self._width, self._height = PAPER_SIZES[self._paper_size]
         else:
-            height, width = PAPER_SIZES[paper_size]
+            self._height, self._width = PAPER_SIZES[self._paper_size]
 
+    def __enter__(self) -> Self:
         logger.info(
             "Launching Chrome (format=%s, orientation=%s, dpi=%d, z=%.3f)",
-            paper_size,
-            payload["orientation"],
+            self._paper_size,
+            self._payload["orientation"],
             self._dpi,
             self._z,
         )
+        self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch_persistent_context(
             headless=True,
             channel="chrome",
             args=BROWSER_LAUNCH_ARGS,
             executable_path=_CHROME_EXECUTABLE,
             user_data_dir=_CHROME_USER_DATA_DIR,
-            viewport={"width": width, "height": height},
+            viewport={"width": self._width, "height": self._height},
             device_scale_factor=self._resolution / 96,
         )
         self._page = self._browser.new_page()
         self._page.set_default_timeout(TIMEOUT_LOADING_WEB_PAGE)
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc_val: BaseException | None,
+        _exc_tb: TracebackType | None,
+    ) -> None:
+        self.close()
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -118,12 +133,8 @@ class ChromeBrowserManager:
     def _denom_to_z_lv95(self, denom: int) -> float:
         """Interpolate a (fractional) zoom level from a scale denominator."""
         z_keys = list(MATRIX_LV95.keys())
-        values = list(MATRIX_LV95.values())
 
-        try:
-            n_unbound = next(i for i, v in enumerate(values) if v < denom)
-        except StopIteration:
-            n_unbound = -1
+        n_unbound = next((i for i, v in enumerate(MATRIX_LV95.values()) if v < denom), -1)
 
         n = max(0, n_unbound - 1) if n_unbound >= 0 else len(z_keys) - 2
         z_n = z_keys[n]
@@ -244,9 +255,8 @@ def render_to_pdf(payload: dict, output_path: Path) -> None:
         msg = "VIEWER_URL_MAP_RASTER is not configured — set it in your environment"
         raise ValueError(msg)
 
-    manager = ChromeBrowserManager(payload)
     try:
-        with _timed("render_to_pdf total"):
+        with ChromeBrowserManager(payload) as manager, _timed("render_to_pdf total"):
             with _timed("build_url"):
                 url = manager.build_url()
             with _timed("navigate_to_url"):
@@ -257,5 +267,3 @@ def render_to_pdf(payload: dict, output_path: Path) -> None:
         logger.exception("Playwright error during rendering")
         msg = "PDF rendering failed"
         raise RuntimeError(msg) from exc
-    finally:
-        manager.close()

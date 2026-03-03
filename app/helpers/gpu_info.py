@@ -9,7 +9,7 @@ from app.config.settings import BROWSER_LAUNCH_ARGS
 logger = logging.getLogger(__name__)
 
 _CHROME_EXECUTABLE = "/usr/bin/google-chrome"
-_CHROME_USER_DATA_DIR = "/tmp/user_data"  # nosec B108  # noqa: S108
+_CHROME_USER_DATA_DIR = "/tmp/user_data"  # noqa: S108
 
 _GPU_INFO_SCRIPT = """
 [document.createElement('canvas')].map((cc) => {

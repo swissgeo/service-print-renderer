@@ -136,7 +136,7 @@ The worker writes probe files to signal its state to Kubernetes:
 | Probe | File (default) | Env var | Behaviour |
 | ----- | -------------- | ------- | --------- |
 | Startup | `/tmp/startup_probe` | `STARTUP_PROBE_FILE` | Created once when the worker starts; never removed |
-| Liveness | `/tmp/liveness_probe` | `LIVENESS_PROBE_FILE` | Touched after every polling cycle; removed on graceful shutdown |
+| Liveness | `/tmp/liveness_probe` | `LIVENESS_PROBE_FILE` | Removed after every polling cycle |
 
 Configure the Kubernetes probes as `exec` checks:
 

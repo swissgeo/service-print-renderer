@@ -17,22 +17,13 @@ from pathlib import Path
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, StatusCode
 
-from app.config.settings import (
-    LIVENESS_PROBE_FILE,
-    SQS_MAX_RECEIVE_COUNT,
-    STARTUP_PROBE_FILE,
-)
+from app.config.settings import LIVENESS_PROBE_FILE, SQS_MAX_RECEIVE_COUNT, STARTUP_PROBE_FILE
 from app.helpers.dynamo_db import update_job_status
 from app.helpers.gpu_info import log_gpu_info
 from app.helpers.otel import initialize, setup_trace_provider, traced
 from app.helpers.printing import render_to_pdf
 from app.helpers.s3 import upload_pdf
-from app.helpers.sqs_queue import (
-    delete_message,
-    parse_message_body,
-    receive_messages,
-    send_to_dlq,
-)
+from app.helpers.sqs_queue import delete_message, parse_message_body, receive_messages, send_to_dlq
 from app.helpers.utils import (
     create_probe_file,
     get_iso_8601_timestamp,
@@ -77,12 +68,8 @@ def process_job(job: dict) -> str:
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         pdf_path = Path(tmp.name)
-
-    try:
         render_to_pdf(payload, pdf_path)
         return upload_pdf(job_id, pdf_path)
-    finally:
-        pdf_path.unlink(missing_ok=True)
 
 
 @traced("worker.handle_message", kind=SpanKind.CONSUMER)
