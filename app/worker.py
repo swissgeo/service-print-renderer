@@ -66,7 +66,7 @@ def process_job(job: dict) -> str:
         started_timestamp_iso_8601=get_iso_8601_timestamp(),
     )
 
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
         pdf_path = Path(tmp.name)
         render_to_pdf(payload, pdf_path)
         return upload_pdf(job_id, pdf_path)
