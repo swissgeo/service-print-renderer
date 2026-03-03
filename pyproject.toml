@@ -96,6 +96,8 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
     "ARG001",  # Ignore unused function arguments in tests
     "ARG005",  # Ignore unused lambda argument in tests
     "PLR2004", # Ignore magic number in tests
+    "SLF001",  # Ignore private member access in tests
+    "PLC0415", # Ignore non-top-level imports in tests
 ]
 
 "app/*.py" = [
