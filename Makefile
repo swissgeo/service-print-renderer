@@ -125,9 +125,9 @@ dockerrun: dockerbuild ## Run the locally built docker image
 	docker run \
 		-it \
 		--env-file=${ENV_FILE} \
-		--network service-print-renderer_network_local \
+		--network shared_network_local \
 		-e LOCALSTACK_ENDPOINT=http://localstack:${LOCALSTACK_PORT} \
-		$(DOCKER_IMG_LOCAL_TAG) -m app.worker
+		$(DOCKER_IMG_LOCAL_TAG)
 
 
 .PHONY: lint

@@ -105,6 +105,8 @@ USER ${USER}
 
 # entrypoint is python; pass -m app.worker as command
 ENTRYPOINT ["python"]
+CMD ["-m", "app.worker"]
+
 
 
 ###########################################################
@@ -141,3 +143,4 @@ USER ${USER}
 
 # entrypoint is python; pass -m app.worker as command
 ENTRYPOINT ["python"]
+CMD ["-m", "app.worker"]

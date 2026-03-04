@@ -50,7 +50,7 @@ services:
         aws sqs create-queue \
           --queue-name ${SQS_QUEUE_NAME} \
           --endpoint-url http://localstack:${LOCALSTACK_PORT} \
-          --attributes "RedrivePolicy={\"deadLetterTargetArn\":\"${DLQ_ARN}\",\"maxReceiveCount\":\"${SQS_MAX_RECEIVE_COUNT}\"},VisibilityTimeout=${SQS_VISIBILITY_TIMEOUT}"
+          --attributes "RedrivePolicy={\"deadLetterTargetArn\":\"$${DLQ_ARN}\",\"maxReceiveCount\":\"${SQS_MAX_RECEIVE_COUNT}\"},VisibilityTimeout=${SQS_VISIBILITY_TIMEOUT}"
     depends_on:
       localstack:
         condition: service_healthy
@@ -104,3 +104,4 @@ services:
 networks:
   network_local:
     driver: bridge
+    name: shared_network_local
