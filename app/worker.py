@@ -24,7 +24,7 @@ from app.helpers.otel import initialize, setup_trace_provider, traced
 from app.helpers.printing import render_to_pdf
 from app.helpers.s3 import upload_pdf
 from app.helpers.sqs_queue import delete_message, parse_message_body, receive_messages, send_to_dlq
-from app.helpers.utils import create_probe_file, get_iso_8601_timestamp, init_logging
+from app.helpers.utils import get_iso_8601_timestamp, init_logging, touch_probe_file
 
 logger = logging.getLogger(__name__)
 
@@ -105,10 +105,10 @@ def handle_message(job_id: str, receipt_handle: str, job: dict, receive_count: i
 def run() -> None:
     """Main polling loop. Runs until a SIGTERM/SIGINT is received."""
     logger.info("Worker started, polling SQS queue...")
-    create_probe_file(STARTUP_PROBE_FILE)
+    touch_probe_file(STARTUP_PROBE_FILE)
 
     while not _shutdown:
-        create_probe_file(LIVENESS_PROBE_FILE)
+        touch_probe_file(LIVENESS_PROBE_FILE)
         try:
             messages = receive_messages()
         except Exception:
@@ -116,7 +116,7 @@ def run() -> None:
             continue
 
         for message in messages:
-            create_probe_file(LIVENESS_PROBE_FILE)
+            touch_probe_file(LIVENESS_PROBE_FILE)
             receipt_handle: str = message["ReceiptHandle"]
             receive_count: int = int(
                 message.get("Attributes", {}).get("ApproximateReceiveCount", 1)
