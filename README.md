@@ -136,7 +136,7 @@ The worker writes probe files to signal its state to Kubernetes:
 | Probe | File (default) | Env var | Behaviour |
 | ----- | -------------- | ------- | --------- |
 | Startup | `/tmp/startup_probe` | `STARTUP_PROBE_FILE` | Created once when the worker starts; never removed |
-| Liveness | `/tmp/liveness_probe` | `LIVENESS_PROBE_FILE` | Removed after every polling cycle |
+| Liveness | `/tmp/liveness_probe` | `LIVENESS_PROBE_FILE` | Touched after every polling and every printing cycle |
 
 Configure the Kubernetes probes as `exec` checks:
 
@@ -146,8 +146,10 @@ startupProbe:
     command: ["test", "-f", "/tmp/startup_probe"]
 livenessProbe:
   exec:
-    command: ["test", "-f", "/tmp/liveness_probe"]
+    command: ["sh", "-c", "test $(( $(date +%s) - $(date +%s -r /tmp/liveness_probe) )) -lt 60"]
 ```
+
+The liveness check passes only if the file was touched within the last 60 seconds, catching a stalled worker even if the file still exists from a previous cycle.
 
 You can verify the probe files manually while the worker is running:
 
@@ -155,8 +157,8 @@ You can verify the probe files manually while the worker is running:
 # startup probe — exists once the worker loop has started
 test -f /tmp/startup_probe && echo "started" || echo "not started"
 
-# liveness probe — touched every polling cycle
-test -f /tmp/liveness_probe && echo "alive" || echo "not alive"
+# liveness probe — touched every polling cycle, must be < 60s old
+test $(( $(date +%s) - $(date +%s -r /tmp/liveness_probe) )) -lt 60 && echo "alive" || echo "not alive"
 ```
 
 ### OpenTelemetry (tracing)
