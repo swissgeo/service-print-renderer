@@ -53,6 +53,9 @@ VECTOR_TILES: bool = os.environ.get("VECTOR_TILES", "false").lower() == "true"
 TIMEOUT_LOADING_WEB_PAGE: int = int(os.environ.get("TIMEOUT_LOADING_WEB_PAGE", "30000"))
 ROUND_UP_TO_NEXT_Z_INT: bool = os.environ.get("ROUND_UP_TO_NEXT_Z_INT", "true").lower() == "true"
 GO_ONE_Z_FURTHER: bool = os.environ.get("GO_ONE_Z_FURTHER", "false").lower() == "true"
+# Recycle (restart) Chrome after this many jobs to prevent memory accumulation.
+# 0 disables recycling.
+BROWSER_RECYCLE_AFTER_JOBS: int = int(os.environ.get("BROWSER_RECYCLE_AFTER_JOBS", "10"))
 
 # Chrome launch flags for headless rendering.
 # USE_GPU=true switches to ANGLE over Vulkan (uses system GPU via nvidia_icd / mesa).
