@@ -7,23 +7,29 @@ and updates the corresponding DynamoDB items with the result.
 Entry point: python -m app.worker
 """
 
+import argparse
 import logging
 import signal
 import sys
+import tempfile
+from pathlib import Path
 
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, StatusCode
 
-from app.config.settings import SQS_ERROR_STATUS_MIN_RECEIVE_COUNT
+from app.config.settings import LIVENESS_PROBE_FILE, SQS_MAX_RECEIVE_COUNT, STARTUP_PROBE_FILE
 from app.helpers.dynamo_db import update_job_status
+from app.helpers.gpu_info import log_gpu_info
 from app.helpers.otel import initialize, setup_trace_provider, traced
-from app.helpers.sqs_queue import (
-    delete_message,
-    make_message_visible,
-    parse_message_body,
-    receive_messages,
+from app.helpers.printing import render_to_pdf
+from app.helpers.s3 import upload_pdf
+from app.helpers.sqs_queue import delete_message, parse_message_body, receive_messages, send_to_dlq
+from app.helpers.utils import (
+    create_probe_file,
+    get_iso_8601_timestamp,
+    init_logging,
+    remove_probe_file,
 )
-from app.helpers.utils import get_iso_8601_timestamp, init_logging
 
 logger = logging.getLogger(__name__)
 
@@ -38,28 +44,32 @@ def _handle_signal(signum: int, _frame: object) -> None:
 
 
 @traced("worker.process_job")
-def process_job(job: dict) -> None:
+def process_job(job: dict) -> str:
     """
-    Process a single print job received from SQS.
+    Render a single print job and upload the result to S3.
 
     Args:
         job: The deserialized job dict (as stored in DynamoDB / sent to SQS
              by service-print-api).
+
+    Returns:
+        The S3 URL of the generated PDF.
     """
     job_id: str = job["job_id"]
+    payload: dict = job["payload"]
     trace.get_current_span().set_attribute("job.id", job_id)
     logger.info("Processing job %s", job_id)
 
-    # Mark job as started
     update_job_status(
         job_id,
         "started",
         started_timestamp_iso_8601=get_iso_8601_timestamp(),
     )
 
-    # TODO: implement actual rendering logic here
-    # For now just mark as done with a placeholder
-    raise NotImplementedError("Rendering logic not yet implemented")
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
+        pdf_path = Path(tmp.name)
+        render_to_pdf(payload, pdf_path)
+        return upload_pdf(job_id, pdf_path)
 
 
 @traced("worker.handle_message", kind=SpanKind.CONSUMER)
@@ -67,49 +77,41 @@ def handle_message(job_id: str, receipt_handle: str, job: dict, receive_count: i
     """
     Handle a single SQS message end-to-end: render the job, update its final
     status in DynamoDB and delete the message from the queue on success.
+    On failure the message is not deleted — SQS will redeliver it until
+    maxReceiveCount is reached, then move it to the DLQ automatically.
+    DynamoDB is only updated to 'error' on the final attempt.
     """
     trace.get_current_span().set_attribute("job.id", job_id)
     trace.get_current_span().set_attribute("messaging.receive_count", receive_count)
     try:
-        process_job(job)
-        # Job rendered successfully
+        pdf_url = process_job(job)
         update_job_status(
             job_id,
             "finished",
             finished_timestamp_iso_8601=get_iso_8601_timestamp(),
+            pdf_url=pdf_url,
         )
         delete_message(receipt_handle)
         logger.info("Job %s completed successfully", job_id)
-    except NotImplementedError:
-        # Rendering not yet implemented — mark as error and delete
-        logger.warning("Job %s: rendering not yet implemented", job_id)
-        trace.get_current_span().set_status(StatusCode.ERROR, "Rendering not yet implemented")
-        update_job_status(
-            job_id,
-            "error",
-            finished_timestamp_iso_8601=get_iso_8601_timestamp(),
-            message="Rendering not yet implemented",
-        )
-        delete_message(receipt_handle)
-    # TODO maybe it would be better to have a handler that treats the DLQ and updates
-    # the dynamodb with error and the timestamp
     except Exception as exc:
         logger.exception("Job %s failed during processing", job_id)
         trace.get_current_span().set_status(StatusCode.ERROR, str(exc))
-        if receive_count >= SQS_ERROR_STATUS_MIN_RECEIVE_COUNT:
+        if receive_count >= SQS_MAX_RECEIVE_COUNT:
             update_job_status(
                 job_id,
                 "error",
                 finished_timestamp_iso_8601=get_iso_8601_timestamp(),
                 message="Internal rendering error",
             )
-        # Make the message immediately visible again for retry
-        make_message_visible(receipt_handle)
+            # Do not delete — let the visibility timeout expire so SQS
+            # moves the message to the DLQ via the redrive policy.
 
 
 def run() -> None:
     """Main polling loop. Runs until a SIGTERM/SIGINT is received."""
     logger.info("Worker started, polling SQS queue...")
+    create_probe_file(STARTUP_PROBE_FILE)
+    remove_probe_file(LIVENESS_PROBE_FILE)
 
     while not _shutdown:
         try:
@@ -119,6 +121,7 @@ def run() -> None:
             continue
 
         for message in messages:
+            remove_probe_file(LIVENESS_PROBE_FILE)
             receipt_handle: str = message["ReceiptHandle"]
             receive_count: int = int(
                 message.get("Attributes", {}).get("ApproximateReceiveCount", 1)
@@ -127,18 +130,36 @@ def run() -> None:
                 job = parse_message_body(message)
                 job_id: str = job["job_id"]
             except KeyError, ValueError:
-                logger.exception("Malformed SQS message, skipping: %s", message.get("Body"))
-                # Delete the malformed message so it doesn't block the queue
+                logger.exception(
+                    "Malformed SQS message, sending directly to DLQ: %s", message.get("Body")
+                )
+                send_to_dlq(message.get("Body", ""))
                 delete_message(receipt_handle)
                 continue
 
             handle_message(job_id, receipt_handle, job, receive_count)
 
+    remove_probe_file(LIVENESS_PROBE_FILE)
     logger.info("Worker stopped.")
 
 
 if __name__ == "__main__":
+    _parser = argparse.ArgumentParser(description="service-print-renderer worker")
+    _parser.add_argument(
+        "-i",
+        "--renderer-info",
+        action="store_true",
+        default=False,
+        help="Print GPU/WebGL renderer info and exit",
+    )
+    _args = _parser.parse_args()
+
     init_logging()
+
+    if _args.renderer_info:
+        log_gpu_info()
+        sys.exit(0)
+
     initialize()
     setup_trace_provider()
 

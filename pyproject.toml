@@ -8,6 +8,7 @@ dependencies = [
     "boto3~=1.42",
     "ecs-logging~=2.2",
     "logging-utilities~=5.3",
+    "playwright~=1.54",
     "python-dotenv~=1.2",
     "pyyaml~=6.0",
     "types-pyyaml~=6.0",
@@ -26,7 +27,7 @@ dev = [
     "pytest-cov",
     "pytest-xdist",
     "ruff>=0.14",
-    "boto3-stubs[dynamodb,sqs]~=1.42",
+    "boto3-stubs[dynamodb,s3,sqs]~=1.42",
 ]
 
 [tool.uv]

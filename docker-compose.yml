@@ -5,7 +5,7 @@ services:
     ports:
       - "${LOCALSTACK_PORT}:4566"
     environment:
-      - SERVICES=dynamodb,sqs
+      - SERVICES=dynamodb,s3,sqs
       - DEBUG=1
     healthcheck:
       test: ["CMD", "curl", "-f", "${LOCALSTACK_ENDPOINT}/_localstack/health"]
@@ -29,7 +29,7 @@ services:
       - --provisioned-throughput
       - ReadCapacityUnits=2,WriteCapacityUnits=1
       - --endpoint-url
-      - ${LOCALSTACK_ENDPOINT}
+      - http://localstack:${LOCALSTACK_PORT}
     depends_on:
       localstack:
         condition: service_healthy
@@ -42,13 +42,38 @@ services:
 
   init-sqs:
     image: amazon/aws-cli
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - sqs
-      - create-queue
-      - --queue-name
-      - ${SQS_QUEUE_NAME}
+      - |
+        aws sqs create-queue --queue-name ${SQS_DL_QUEUE_NAME} --endpoint-url http://localstack:${LOCALSTACK_PORT}
+        DLQ_ARN="arn:aws:sqs:${AWS_REGION}:000000000000:${SQS_DL_QUEUE_NAME}"
+        aws sqs create-queue \
+          --queue-name ${SQS_QUEUE_NAME} \
+          --endpoint-url http://localstack:${LOCALSTACK_PORT} \
+          --attributes "RedrivePolicy={\"deadLetterTargetArn\":\"$${DLQ_ARN}\",\"maxReceiveCount\":\"${SQS_MAX_RECEIVE_COUNT}\"},VisibilityTimeout=${SQS_VISIBILITY_TIMEOUT}"
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - SQS_MAX_RECEIVE_COUNT=${SQS_MAX_RECEIVE_COUNT}
+      - SQS_VISIBILITY_TIMEOUT=${SQS_VISIBILITY_TIMEOUT}
+    networks:
+      - network_local
+
+  init-s3:
+    image: amazon/aws-cli
+    command:
+      - s3api
+      - create-bucket
+      - --bucket
+      - ${S3_BUCKET_NAME}
       - --endpoint-url
-      - ${LOCALSTACK_ENDPOINT}
+      - http://localstack:${LOCALSTACK_PORT}
+      - --create-bucket-configuration
+      - LocationConstraint=${AWS_REGION}
     depends_on:
       localstack:
         condition: service_healthy
@@ -59,6 +84,24 @@ services:
     networks:
       - network_local
 
+  renderer-info:
+    profiles: [renderer-info]
+    build:
+      context: .
+      target: production
+    command: ["-m", "app.worker", "--renderer-info"]
+    env_file: ${ENV_FILE:-.env}
+    environment:
+      - WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
+    volumes:
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/${WAYLAND_DISPLAY:-wayland-0}:/run/user/1000/${WAYLAND_DISPLAY:-wayland-0}
+    devices:
+      - /dev/nvidia0:/dev/nvidia0
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-modeset:/dev/nvidia-modeset
+      - /dev/dri:/dev/dri
+
 networks:
   network_local:
     driver: bridge
+    name: shared_network_local

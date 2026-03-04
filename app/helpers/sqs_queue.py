@@ -13,13 +13,11 @@ from app.config.settings import (
     AWS_READ_TIMEOUT,
     AWS_REGION,
     LOCALSTACK_ENDPOINT,
+    SQS_DL_QUEUE_NAME,
     SQS_MAX_MESSAGES,
     SQS_QUEUE_NAME,
     SQS_WAIT_TIME_SECONDS,
 )
-
-# Attributes requested from SQS on every receive_message call
-_SQS_ATTRIBUTES = ["ApproximateReceiveCount"]
 
 if TYPE_CHECKING:
     from mypy_boto3_sqs import SQSClient
@@ -78,7 +76,7 @@ def receive_messages() -> list[dict[str, Any]]:
             QueueUrl=queue_url,
             MaxNumberOfMessages=SQS_MAX_MESSAGES,
             WaitTimeSeconds=SQS_WAIT_TIME_SECONDS,
-            AttributeNames=_SQS_ATTRIBUTES,
+            AttributeNames=["ApproximateReceiveCount"],
         )
         messages = response.get("Messages", [])
         logger.debug("Received %d message(s) from SQS queue %s", len(messages), SQS_QUEUE_NAME)
@@ -117,30 +115,27 @@ def delete_message(receipt_handle: str) -> None:
         raise
 
 
-def make_message_visible(receipt_handle: str) -> None:
+@lru_cache(maxsize=1)
+def get_dlq_url() -> str:
+    """Returns the URL of the configured SQS dead-letter queue."""
+    sqs = get_sqs_client()
+    return sqs.get_queue_url(QueueName=SQS_DL_QUEUE_NAME)["QueueUrl"]
+
+
+def send_to_dlq(message_body: str) -> None:
     """
-    Makes an SQS message immediately visible again for reprocessing.
+    Sends a message body directly to the dead-letter queue.
 
     Args:
-        receipt_handle: The receipt handle returned by receive_message.
+        message_body: The raw message body string to forward.
     """
     sqs = get_sqs_client()
     try:
-        queue_url = get_queue_url()
-        sqs.change_message_visibility(
-            QueueUrl=queue_url, ReceiptHandle=receipt_handle, VisibilityTimeout=0
-        )
-        logger.debug("Made message visible again in SQS queue %s", SQS_QUEUE_NAME)
-    except ConnectTimeoutError:
-        logger.exception(
-            "Connection timeout making message visible in SQS queue %s", SQS_QUEUE_NAME
-        )
-        raise
-    except ReadTimeoutError:
-        logger.exception("Read timeout making message visible in SQS queue %s", SQS_QUEUE_NAME)
-        raise
+        dlq_url = get_dlq_url()
+        sqs.send_message(QueueUrl=dlq_url, MessageBody=message_body)
+        logger.debug("Sent message to DLQ %s", SQS_DL_QUEUE_NAME)
     except ClientError:
-        logger.exception("Error making message visible in SQS queue %s", SQS_QUEUE_NAME)
+        logger.exception("Error sending message to DLQ %s", SQS_DL_QUEUE_NAME)
         raise
 
 

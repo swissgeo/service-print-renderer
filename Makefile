@@ -90,6 +90,16 @@ run: ## Run the worker locally
 	ENV_FILE=.env $(UV_RUN) python -m app.worker
 
 
+.PHONY: renderer-info
+renderer-info: ## Print GPU/WebGL renderer info and exit
+	ENV_FILE=.env $(UV_RUN) python -m app.worker --renderer-info
+
+
+.PHONY: docker-renderer-info
+docker-renderer-info: ## Print GPU/WebGL renderer info from inside Docker
+	docker compose --env-file=${ENV_FILE} --profile renderer-info run --rm renderer-info
+
+
 .PHONY: dockerlogin
 dockerlogin: ## Login to the AWS Docker Registry (ECR)
 	aws --profile swisstopo-swissgeo-builder ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(DOCKER_REGISTRY)
@@ -115,8 +125,9 @@ dockerrun: dockerbuild ## Run the locally built docker image
 	docker run \
 		-it \
 		--env-file=${ENV_FILE} \
-		--net=host \
-		$(DOCKER_IMG_LOCAL_TAG) -m app.worker
+		--network shared_network_local \
+		-e LOCALSTACK_ENDPOINT=http://localstack:${LOCALSTACK_PORT} \
+		$(DOCKER_IMG_LOCAL_TAG)
 
 
 .PHONY: lint
@@ -144,7 +155,7 @@ test: $(LOGS_DIR) ## Run tests locally
 help: ## Display this help
 # automatically generate the help page based on the documentation after each make target
 # from https://gist.github.com/prwhite/8168133
-	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m\033[0m\n"} /^[$$()% a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m\033[0m\n"} /^[$$()% a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
 $(LOGS_DIR):
 	mkdir -p -m=777 $(LOGS_DIR)
