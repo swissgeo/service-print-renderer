@@ -49,7 +49,6 @@ VIEWER_URL_MAP: str = os.environ.get("VIEWER_URL_MAP", "")
 VIEWER_URL_LEGEND: str = os.environ.get("VIEWER_URL_LEGEND", "")
 
 # Rendering behaviour
-VECTOR_TILES: bool = os.environ.get("VECTOR_TILES", "false").lower() == "true"
 TIMEOUT_LOADING_WEB_PAGE: int = int(os.environ.get("TIMEOUT_LOADING_WEB_PAGE", "30000"))
 ROUND_UP_TO_NEXT_Z_INT: bool = os.environ.get("ROUND_UP_TO_NEXT_Z_INT", "true").lower() == "true"
 GO_ONE_Z_FURTHER: bool = os.environ.get("GO_ONE_Z_FURTHER", "false").lower() == "true"
