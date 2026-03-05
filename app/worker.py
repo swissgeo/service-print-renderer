@@ -17,11 +17,16 @@ from pathlib import Path
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, StatusCode
 
-from app.config.settings import LIVENESS_PROBE_FILE, SQS_MAX_RECEIVE_COUNT, STARTUP_PROBE_FILE
+from app.config.settings import (
+    BROWSER_RECYCLE_AFTER_JOBS,
+    LIVENESS_PROBE_FILE,
+    SQS_MAX_RECEIVE_COUNT,
+    STARTUP_PROBE_FILE,
+)
 from app.helpers.dynamo_db import update_job_status
 from app.helpers.gpu_info import log_gpu_info
 from app.helpers.otel import initialize, setup_trace_provider, traced
-from app.helpers.printing import render_to_pdf
+from app.helpers.printing import ChromeBrowserManager
 from app.helpers.s3 import upload_pdf
 from app.helpers.sqs_queue import delete_message, parse_message_body, receive_messages, send_to_dlq
 from app.helpers.utils import get_iso_8601_timestamp, init_logging, touch_probe_file
@@ -39,13 +44,14 @@ def _handle_signal(signum: int, _frame: object) -> None:
 
 
 @traced("worker.process_job")
-def process_job(job: dict) -> str:
+def process_job(job: dict, browser: ChromeBrowserManager) -> str:
     """
     Render a single print job and upload the result to S3.
 
     Args:
         job: The deserialized job dict (as stored in DynamoDB / sent to SQS
              by service-print-api).
+        browser: The long-lived Chrome browser manager to render with.
 
     Returns:
         The S3 URL of the generated PDF.
@@ -63,12 +69,14 @@ def process_job(job: dict) -> str:
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
         pdf_path = Path(tmp.name)
-        render_to_pdf(payload, pdf_path)
+        browser.render_to_pdf(payload, pdf_path)
         return upload_pdf(job_id, pdf_path)
 
 
 @traced("worker.handle_message", kind=SpanKind.CONSUMER)
-def handle_message(job_id: str, receipt_handle: str, job: dict, receive_count: int) -> None:
+def handle_message(
+    job_id: str, receipt_handle: str, job: dict, receive_count: int, browser: ChromeBrowserManager
+) -> None:
     """
     Handle a single SQS message end-to-end: render the job, update its final
     status in DynamoDB and delete the message from the queue on success.
@@ -79,7 +87,7 @@ def handle_message(job_id: str, receipt_handle: str, job: dict, receive_count: i
     trace.get_current_span().set_attribute("job.id", job_id)
     trace.get_current_span().set_attribute("messaging.receive_count", receive_count)
     try:
-        pdf_url = process_job(job)
+        pdf_url = process_job(job, browser)
         update_job_status(
             job_id,
             "finished",
@@ -108,31 +116,41 @@ def run() -> None:
     touch_probe_file(STARTUP_PROBE_FILE)
 
     while not _shutdown:
-        touch_probe_file(LIVENESS_PROBE_FILE)
-        try:
-            messages = receive_messages()
-        except Exception:
-            logger.exception("Error receiving messages from SQS, retrying...")
-            continue
+        with ChromeBrowserManager() as browser:
+            jobs_processed = 0
+            while not _shutdown and (
+                not BROWSER_RECYCLE_AFTER_JOBS or jobs_processed < BROWSER_RECYCLE_AFTER_JOBS
+            ):
+                touch_probe_file(LIVENESS_PROBE_FILE)
+                try:
+                    messages = receive_messages()
+                except Exception:
+                    logger.exception("Error receiving messages from SQS, retrying...")
+                    continue
 
-        for message in messages:
-            touch_probe_file(LIVENESS_PROBE_FILE)
-            receipt_handle: str = message["ReceiptHandle"]
-            receive_count: int = int(
-                message.get("Attributes", {}).get("ApproximateReceiveCount", 1)
-            )
-            try:
-                job = parse_message_body(message)
-                job_id: str = job["job_id"]
-            except KeyError, ValueError:
-                logger.exception(
-                    "Malformed SQS message, sending directly to DLQ: %s", message.get("Body")
-                )
-                send_to_dlq(message.get("Body", ""))
-                delete_message(receipt_handle)
-                continue
+                for message in messages:
+                    touch_probe_file(LIVENESS_PROBE_FILE)
+                    receipt_handle: str = message["ReceiptHandle"]
+                    receive_count: int = int(
+                        message.get("Attributes", {}).get("ApproximateReceiveCount", 1)
+                    )
+                    try:
+                        job = parse_message_body(message)
+                        job_id: str = job["job_id"]
+                    except KeyError, ValueError:
+                        logger.exception(
+                            "Malformed SQS message, sending directly to DLQ: %s",
+                            message.get("Body"),
+                        )
+                        send_to_dlq(message.get("Body", ""))
+                        delete_message(receipt_handle)
+                        continue
 
-            handle_message(job_id, receipt_handle, job, receive_count)
+                    handle_message(job_id, receipt_handle, job, receive_count, browser)
+                    jobs_processed += 1
+
+            if not _shutdown:
+                logger.info("Recycling Chrome after %d jobs", jobs_processed)
     logger.info("Worker stopped.")
 
 

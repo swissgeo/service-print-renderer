@@ -15,10 +15,11 @@ if TYPE_CHECKING:
     from types import TracebackType
     from typing import Self
 
-    from playwright.sync_api import BrowserContext, Page, Playwright
+    from playwright.sync_api import Browser, BrowserContext, Page, Playwright
 
 from app.config.settings import (
     BROWSER_LAUNCH_ARGS,
+    BROWSER_NAVIGATION_RETRIES,
     GO_ONE_Z_FURTHER,
     MATRIX_LV95,
     PAPER_SIZES,
@@ -33,7 +34,6 @@ from app.config.settings import (
 logger = logging.getLogger(__name__)
 
 _CHROME_EXECUTABLE = "/usr/bin/google-chrome"
-_CHROME_USER_DATA_DIR = "/tmp/user_data"  # nosec B108  # noqa: S108
 
 
 @contextlib.contextmanager
@@ -58,64 +58,28 @@ def _remove_z_param(query: str) -> str:
 
 
 class ChromeBrowserManager:
-    """Manages a headless Chrome instance for PDF rendering via Playwright."""
+    """Manages a long-lived headless Chrome instance for PDF rendering via Playwright.
 
-    _playwright: Playwright | None
-    _browser: BrowserContext | None
-    _page: Page | None
+    Chrome is launched once on ``__enter__`` and kept alive for the lifetime of
+    the context manager.  Each call to ``render_to_pdf`` opens a fresh
+    ``BrowserContext`` (with the job-specific viewport and scale) and closes it
+    when the PDF has been written, so jobs are fully isolated while the
+    expensive Chrome process is reused.
+    """
 
-    def __init__(self, payload: dict) -> None:
-        self._payload = payload
-        self._playwright = None
-        self._browser = None
-        self._page = None
-
-        self._paper_size: str = str(payload["format"]).lower()
-        self._denom = int(payload["scale"])
-        self._resolution = int(payload.get("resolution", 96)) or 96
-        self._dpi = self._resolution  # may be overridden below
-
-        z_exact = self._denom_to_z_lv95(self._denom)
-        self._z = z_exact
-
-        if ROUND_UP_TO_NEXT_Z_INT:
-            z_ceil = math.ceil(z_exact)
-            self._set_dpi_for_overzoom(self._denom, z_ceil)
-            self._z = z_ceil
-
-        if GO_ONE_Z_FURTHER:
-            self._z = self._z + 1
-            self._set_dpi_for_overzoom(self._denom, int(self._z))
-
-        self._scale = 96 / self._dpi
-        orientation_code = "L" if payload["orientation"] == "landscape" else "P"
-        self._print_config = f"{self._paper_size}_{orientation_code},{self._dpi}".upper()
-
-        if payload["orientation"] == "portrait":
-            self._width, self._height = PAPER_SIZES[self._paper_size]
-        else:
-            self._height, self._width = PAPER_SIZES[self._paper_size]
+    def __init__(self) -> None:
+        self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
 
     def __enter__(self) -> Self:
-        logger.info(
-            "Launching Chrome (format=%s, orientation=%s, dpi=%d, z=%.3f)",
-            self._paper_size,
-            self._payload["orientation"],
-            self._dpi,
-            self._z,
-        )
+        logger.info("Launching Chrome")
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch_persistent_context(
+        self._browser = self._playwright.chromium.launch(
             headless=True,
             channel="chrome",
             args=BROWSER_LAUNCH_ARGS,
             executable_path=_CHROME_EXECUTABLE,
-            user_data_dir=_CHROME_USER_DATA_DIR,
-            viewport={"width": self._width, "height": self._height},
-            device_scale_factor=self._resolution / 96,
         )
-        self._page = self._browser.new_page()
-        self._page.set_default_timeout(TIMEOUT_LOADING_WEB_PAGE)
         return self
 
     def __exit__(
@@ -130,7 +94,8 @@ class ChromeBrowserManager:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _denom_to_z_lv95(self, denom: int) -> float:
+    @staticmethod
+    def _denom_to_z_lv95(denom: int) -> float:
         """Interpolate a (fractional) zoom level from a scale denominator."""
         z_keys = list(MATRIX_LV95.keys())
 
@@ -144,18 +109,49 @@ class ChromeBrowserManager:
         )
         return round(z_n + delta_z * (z_np1 - z_n), 3)
 
-    def _set_dpi_for_overzoom(self, denom: int, z: int) -> None:
-        """Recalculate DPI when rendering at a higher zoom level than requested."""
-        self._dpi = round(96 * (denom / MATRIX_LV95[z]))
+    def _resolve_job_params(self, payload: dict) -> dict:
+        """Derive all rendering parameters from the job payload."""
+        paper_size = str(payload["format"]).lower()
+        denom = int(payload["scale"])
+        resolution = int(payload.get("resolution", 96)) or 96
+        dpi = resolution
 
-    # ------------------------------------------------------------------
-    # Public interface
-    # ------------------------------------------------------------------
+        z_exact = self._denom_to_z_lv95(denom)
+        z = z_exact
 
-    def build_url(self) -> str:
+        if ROUND_UP_TO_NEXT_Z_INT:
+            z_ceil = math.ceil(z_exact)
+            dpi = round(96 * (denom / MATRIX_LV95[z_ceil]))
+            z = z_ceil
+
+        if GO_ONE_Z_FURTHER:
+            z = z + 1
+            dpi = round(96 * (denom / MATRIX_LV95[int(z)]))
+
+        scale = 96 / dpi
+        orientation_code = "L" if payload["orientation"] == "landscape" else "P"
+        print_config = f"{paper_size}_{orientation_code},{dpi}".upper()
+
+        if payload["orientation"] == "portrait":
+            width, height = PAPER_SIZES[paper_size]
+        else:
+            height, width = PAPER_SIZES[paper_size]
+
+        return {
+            "paper_size": paper_size,
+            "dpi": dpi,
+            "z": z,
+            "scale": scale,
+            "print_config": print_config,
+            "width": width,
+            "height": height,
+            "resolution": resolution,
+        }
+
+    def _build_url(self, payload: dict, params: dict) -> str:
         """Construct the full webmapviewer URL for the current job."""
-        query = _remove_z_param(str(self._payload["query"]))
-        view = str(self._payload.get("view", "print_map"))
+        query = _remove_z_param(str(payload["query"]))
+        view = str(payload.get("view", "print_map"))
 
         if view == "print_legend":
             base_url = VIEWER_URL_LEGEND
@@ -171,49 +167,101 @@ class ChromeBrowserManager:
             msg = f"{env_var} is not configured — set it in your environment"
             raise ValueError(msg)
 
-        return f"{base_url}?{query}&printConfig={self._print_config}&z={self._z}"
+        return f"{base_url}?{query}&printConfig={params['print_config']}&z={params['z']}"
 
-    def navigate_to_url(self, url: str) -> None:
-        """Navigate to the webmapviewer URL and wait until the map is ready."""
-        if not self._page:
-            msg = "Browser page is not initialised"
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    def render_to_pdf(self, payload: dict, output_path: Path) -> None:
+        """Render a print job to PDF, reusing the long-lived Chrome process.
+
+        A fresh ``BrowserContext`` is created for each job (to apply the
+        job-specific viewport and device scale) and closed when done, so
+        successive jobs do not share any browser state.
+
+        Args:
+            payload: The job payload dict (format, orientation, scale,
+                     resolution, view, query).
+            output_path: Destination path for the generated PDF.
+
+        Raises:
+            RuntimeError: If the browser is not initialised or Playwright
+                          encounters an unrecoverable error.
+        """
+        if not self._browser:
+            msg = "Browser is not initialised — use ChromeBrowserManager as a context manager"
             raise RuntimeError(msg)
 
-        logger.info("Navigating to %s", url)
-        self._page.goto(url)
-
-        # The webmapviewer fires a 'gaMapReady' window message when fully loaded.
-        self._page.evaluate(
-            """
-            new Promise(resolve => {
-                window.addEventListener("message", event => {
-                    if (event.data.type === 'gaMapReady') resolve(event.data);
-                });
-            })
-            """
+        params = self._resolve_job_params(payload)
+        logger.info(
+            "Rendering job (format=%s, orientation=%s, dpi=%d, z=%.3f)",
+            params["paper_size"],
+            payload["orientation"],
+            params["dpi"],
+            params["z"],
         )
-        self._page.wait_for_load_state("networkidle")
-        logger.info("Page loaded")
 
-    def save_page_as_pdf(self, output_path: Path) -> None:
-        """Render the current page to a PDF file."""
-        if not self._page:
-            msg = "Browser page is not initialised"
-            raise RuntimeError(msg)
-
-        is_landscape = self._payload["orientation"] == "landscape"
-        page_format = str(self._payload["format"]).upper()
-
-        logger.info("Saving PDF to %s", output_path)
-        self._page.emulate_media(media="print")
-        self._page.pdf(
-            path=str(output_path),
-            format=page_format,
-            landscape=is_landscape,
-            print_background=True,
-            scale=self._scale,
+        context: BrowserContext = self._browser.new_context(
+            viewport={"width": params["width"], "height": params["height"]},
+            device_scale_factor=params["resolution"] / 96,
         )
-        logger.info("PDF saved successfully")
+        try:
+            page: Page = context.new_page()
+            page.set_default_timeout(TIMEOUT_LOADING_WEB_PAGE)
+
+            with _timed("build_url"):
+                url = self._build_url(payload, params)
+
+            logger.info("Navigating to %s", url)
+            with _timed("navigate_to_url"):
+                for attempt in range(BROWSER_NAVIGATION_RETRIES):
+                    try:
+                        page.goto(url)
+                        break
+                    except Error as exc:
+                        if (
+                            "ERR_NETWORK_CHANGED" in str(exc)
+                            and attempt < BROWSER_NAVIGATION_RETRIES - 1
+                        ):
+                            logger.warning(
+                                "ERR_NETWORK_CHANGED, retrying navigation (attempt %d)",
+                                attempt + 1,
+                            )
+                            time.sleep(0.5)
+                        else:
+                            raise
+                page.evaluate(
+                    """
+                    new Promise(resolve => {
+                        window.addEventListener("message", event => {
+                            if (event.data.type === 'gaMapReady') resolve(event.data);
+                        });
+                    })
+                    """
+                )
+                page.wait_for_load_state("networkidle")
+            logger.info("Page loaded")
+
+            is_landscape = payload["orientation"] == "landscape"
+            page_format = str(payload["format"]).upper()
+            logger.info("Saving PDF to %s", output_path)
+            with _timed("save_page_as_pdf"):
+                page.emulate_media(media="print")
+                page.pdf(
+                    path=str(output_path),
+                    format=page_format,
+                    landscape=is_landscape,
+                    print_background=True,
+                    scale=params["scale"],
+                )
+            logger.info("PDF saved successfully")
+        except Error as exc:
+            logger.exception("Playwright error during rendering")
+            msg = "PDF rendering failed"
+            raise RuntimeError(msg) from exc
+        finally:
+            context.close()
 
     def close(self) -> None:
         """Close the browser and stop the Playwright context."""
@@ -227,43 +275,3 @@ class ChromeBrowserManager:
                 self._playwright.stop()
         except Exception:  # noqa: BLE001
             logger.warning("Error stopping Playwright, ignoring", exc_info=True)
-
-
-def render_to_pdf(payload: dict, output_path: Path) -> None:
-    """Render a print job payload to a PDF at *output_path*.
-
-    Args:
-        payload: The job payload dict (format, orientation, scale, resolution,
-                 view, query).
-        output_path: Destination path for the generated PDF.
-
-    Raises:
-        RuntimeError: If Playwright encounters an unrecoverable error.
-    """
-    # Validate URL config before launching Chrome so we don't waste resources
-    # on a job that will always fail.
-    view = str(payload.get("view", "print_map"))
-    if view == "print_legend":
-        if not VIEWER_URL_LEGEND:
-            msg = "VIEWER_URL_LEGEND is not configured — set it in your environment"
-            raise ValueError(msg)
-    elif VECTOR_TILES:
-        if not VIEWER_URL_MAP:
-            msg = "VIEWER_URL_MAP is not configured — set it in your environment"
-            raise ValueError(msg)
-    elif not VIEWER_URL_MAP_RASTER:
-        msg = "VIEWER_URL_MAP_RASTER is not configured — set it in your environment"
-        raise ValueError(msg)
-
-    try:
-        with ChromeBrowserManager(payload) as manager, _timed("render_to_pdf total"):
-            with _timed("build_url"):
-                url = manager.build_url()
-            with _timed("navigate_to_url"):
-                manager.navigate_to_url(url)
-            with _timed("save_page_as_pdf"):
-                manager.save_page_as_pdf(output_path)
-    except Error as exc:
-        logger.exception("Playwright error during rendering")
-        msg = "PDF rendering failed"
-        raise RuntimeError(msg) from exc

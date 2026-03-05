@@ -62,7 +62,7 @@ make setup
 Start the local AWS stack (DynamoDB, SQS, S3) and create the required resources:
 
 > [!NOTE]
-> Maybe you want to start the local stack from the project `service-print-api` it is starting exactly the same local stack as in this project. Doing so, you have the possibility to test the entire print procedure. 
+> Maybe you want to start the local stack from the project `service-print-api` it is starting exactly the same local stack as in this project. Doing so, you have the possibility to test the entire print procedure.
 
 
 ```bash
@@ -128,6 +128,8 @@ The service is configured entirely via environment variables:
 | `ROUND_UP_TO_NEXT_Z_INT` | `true` | Round the interpolated zoom level up to the next z (integer) for sharper raster tiles |
 | `GO_ONE_Z_FURTHER` | `false` | Use one zoom level higher than calculated (e.g. to force pk25 at scale 1:25 000) |
 | `USE_GPU` | `false` | Set to `true` to use the local machine's GPU (native OpenGL) instead of the SwiftShader software rasterizer — for local development only |
+| `BROWSER_RECYCLE_AFTER_JOBS` | `10` | Restart Chrome after this many jobs to prevent memory accumulation; set to `0` to disable |
+| `BROWSER_NAVIGATION_RETRIES` | `3` | Number of times to retry page navigation on `ERR_NETWORK_CHANGED` before failing the job |
 
 ### Kubernetes probes
 
