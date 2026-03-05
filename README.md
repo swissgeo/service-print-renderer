@@ -25,7 +25,7 @@
 
 ## Summary Of The Project
 
-`service-print-renderer` is a background worker service responsible for consuming print jobs from an SQS queue and rendering them into PDF documents.
+`service-print-renderer` is a background worker service responsible for consuming print jobs from an SQS queue and rendering them into PDF documents. The state of the print job is being updated in a dynamodb.
 
 When `service-print-api` receives a print request from a client, it enqueues a job to SQS and returns a job ID. The renderer continuously polls that queue, picks up pending jobs one at a time, launches a headless Chrome browser via [Playwright](https://playwright.dev/python/), renders the webmapviewer page as a PDF, uploads it to S3, and updates the job status in DynamoDB. The `pdf_url` stored in DynamoDB is an S3 presigned URL valid for `S3_PRESIGNED_URL_EXPIRY` seconds. Clients can then query `service-print-api` with the job ID to check the status and retrieve the resulting document once it is ready.
 
