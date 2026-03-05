@@ -25,7 +25,6 @@ from app.config.settings import (
     PAPER_SIZES,
     ROUND_UP_TO_NEXT_Z_INT,
     TIMEOUT_LOADING_WEB_PAGE,
-    VECTOR_TILES,
     VIEWER_URL_LEGEND,
     VIEWER_URL_MAP,
     VIEWER_URL_MAP_RASTER,
@@ -156,7 +155,7 @@ class ChromeBrowserManager:
         if view == "print_legend":
             base_url = VIEWER_URL_LEGEND
             env_var = "VIEWER_URL_LEGEND"
-        elif VECTOR_TILES:
+        elif view == "print_vec_map":
             base_url = VIEWER_URL_MAP
             env_var = "VIEWER_URL_MAP"
         else:

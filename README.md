@@ -123,7 +123,6 @@ The service is configured entirely via environment variables:
 | `VIEWER_URL_MAP_RASTER` | — | Webmapviewer endpoint for raster map printing (**required**) |
 | `VIEWER_URL_MAP` | — | Webmapviewer endpoint for vector-tile map printing |
 | `VIEWER_URL_LEGEND` | — | Webmapviewer endpoint for legend printing |
-| `VECTOR_TILES` | `false` | Set to `true` to use the vector-tile viewer URL instead of the raster one |
 | `TIMEOUT_LOADING_WEB_PAGE` | `30000` | Browser page-load timeout in milliseconds |
 | `ROUND_UP_TO_NEXT_Z_INT` | `true` | Round the interpolated zoom level up to the next z (integer) for sharper raster tiles |
 | `GO_ONE_Z_FURTHER` | `false` | Use one zoom level higher than calculated (e.g. to force pk25 at scale 1:25 000) |
