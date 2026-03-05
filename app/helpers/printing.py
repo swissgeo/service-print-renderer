@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 from app.config.settings import (
     BROWSER_LAUNCH_ARGS,
+    BROWSER_NAVIGATION_RETRIES,
     GO_ONE_Z_FURTHER,
     MATRIX_LV95,
     PAPER_SIZES,
@@ -214,7 +215,22 @@ class ChromeBrowserManager:
 
             logger.info("Navigating to %s", url)
             with _timed("navigate_to_url"):
-                page.goto(url)
+                for attempt in range(BROWSER_NAVIGATION_RETRIES):
+                    try:
+                        page.goto(url)
+                        break
+                    except Error as exc:
+                        if (
+                            "ERR_NETWORK_CHANGED" in str(exc)
+                            and attempt < BROWSER_NAVIGATION_RETRIES - 1
+                        ):
+                            logger.warning(
+                                "ERR_NETWORK_CHANGED, retrying navigation (attempt %d)",
+                                attempt + 1,
+                            )
+                            time.sleep(0.5)
+                        else:
+                            raise
                 page.evaluate(
                     """
                     new Promise(resolve => {
