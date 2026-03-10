@@ -21,13 +21,13 @@ def mock_table():
 
 
 def test_get_print_job_found(mock_table):
-    job = {"job_id": "abc123", "status": "open"}
+    job = {"job_id": "4a80ad23a0d62b4102", "status": "open"}
     mock_table.get_item.return_value = {"Item": job}
 
-    result = get_print_job("abc123")
+    result = get_print_job("4a80ad23a0d62b4102")
 
     assert result == job
-    mock_table.get_item.assert_called_once_with(Key={"job_id": "abc123"})
+    mock_table.get_item.assert_called_once_with(Key={"job_id": "4a80ad23a0d62b4102"})
 
 
 def test_get_print_job_not_found(mock_table):
@@ -42,14 +42,14 @@ def test_get_print_job_propagates_connect_timeout(mock_table):
     mock_table.get_item.side_effect = ConnectTimeoutError(endpoint_url="http://localhost")
 
     with pytest.raises(ConnectTimeoutError):
-        get_print_job("abc123")
+        get_print_job("4a80ad23a0d62b4102")
 
 
 def test_get_print_job_propagates_read_timeout(mock_table):
     mock_table.get_item.side_effect = ReadTimeoutError(endpoint_url="http://localhost")
 
     with pytest.raises(ReadTimeoutError):
-        get_print_job("abc123")
+        get_print_job("4a80ad23a0d62b4102")
 
 
 def test_get_print_job_propagates_client_error(mock_table):
@@ -58,7 +58,7 @@ def test_get_print_job_propagates_client_error(mock_table):
     )
 
     with pytest.raises(ClientError):
-        get_print_job("abc123")
+        get_print_job("4a80ad23a0d62b4102")
 
 
 # ---------------------------------------------------------------------------
@@ -68,22 +68,22 @@ def test_get_print_job_propagates_client_error(mock_table):
 
 def test_update_job_status_processing(mock_table):
     update_job_status(
-        "abc123", "processing", started_timestamp_iso_8601="2024-01-01T00:00:00+00:00"
+        "4a80ad23a0d62b4102", "processing", started_timestamp_iso_8601="2024-01-01T00:00:00+00:00"
     )
 
     mock_table.update_item.assert_called_once()
     call_kwargs = mock_table.update_item.call_args[1]
-    assert call_kwargs["Key"] == {"job_id": "abc123"}
+    assert call_kwargs["Key"] == {"job_id": "4a80ad23a0d62b4102"}
     assert ":val_status" in call_kwargs["ExpressionAttributeValues"]
     assert call_kwargs["ExpressionAttributeValues"][":val_status"] == "processing"
 
 
 def test_update_job_status_done(mock_table):
     update_job_status(
-        "abc123",
+        "4a80ad23a0d62b4102",
         "done",
         finished_timestamp_iso_8601="2024-01-01T00:05:00+00:00",
-        pdf_url="s3://bucket/abc123.pdf",
+        pdf_url="s3://bucket/4a80ad23a0d62b4102.pdf",
     )
 
     mock_table.update_item.assert_called_once()
@@ -112,7 +112,7 @@ def test_update_job_status_update_expression_contains_all_fields(mock_table):
         "job-1",
         "finished",
         finished_timestamp_iso_8601="2024-01-01T00:05:00+00:00",
-        pdf_url="https://example.com/file.pdf",
+        pdf_url="https://example.com/4a80ad23a0d62b4102.pdf",
     )
 
     expr = mock_table.update_item.call_args[1]["UpdateExpression"]

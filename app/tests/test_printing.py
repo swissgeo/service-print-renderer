@@ -12,14 +12,14 @@ from app.helpers.printing import ChromeBrowserManager, _remove_z_param
 _PAYLOAD = {
     "format": "a4",
     "orientation": "portrait",
-    "scale": 500000,
+    "scale": 50000,
     "resolution": 96,
     "view": "print_map",
     "query": "layers=ch.swisstopo.pixelkarte-farbe&topic=ech",
 }
 
 # Minimal params dict as produced by _resolve_job_params
-_PARAMS = {"print_config": "A4_P,96", "z": 7.0}
+_PARAMS = {"print_config": "A4_P,96", "z": 6.9}
 
 
 # ---------------------------------------------------------------------------
@@ -28,14 +28,15 @@ _PARAMS = {"print_config": "A4_P,96", "z": 7.0}
 
 
 def test_remove_z_param_strips_z():
-    result = _remove_z_param("layers=foo&z=12&topic=ech")
+    result = _remove_z_param("layers=ch.swisstopo.pixelkarte-farbe&z=12&topic=ech")
     assert "z=12" not in result
-    assert "layers=foo" in result
+    assert "layers=ch.swisstopo.pixelkarte-farbe" in result
     assert "topic=ech" in result
 
 
 def test_remove_z_param_no_z_unchanged():
-    assert _remove_z_param("layers=foo&topic=ech") == "layers=foo&topic=ech"
+    query = "layers=ch.swisstopo.pixelkarte-farbe&topic=ech"
+    assert _remove_z_param(query) == query
 
 
 def test_remove_z_param_only_z_returns_empty():
@@ -47,8 +48,8 @@ def test_remove_z_param_empty_string():
 
 
 def test_remove_z_param_z_not_reintroduced():
-    result = _remove_z_param("z=99&layers=foo&z=3")
-    assert "z=99" not in result
+    result = _remove_z_param("z=25&layers=ch.swisstopo.pixelkarte-farbe&z=3")
+    assert "z=25" not in result
     assert "z=3" not in result
 
 
@@ -67,6 +68,11 @@ def test_init_does_not_launch_browser():
 # ---------------------------------------------------------------------------
 # ChromeBrowserManager._resolve_job_params
 # ---------------------------------------------------------------------------
+# These test will most probably change with the swissgeo webmapviewer
+# The new webmapviewer will probably have the query keys
+# - orientation
+# - format
+# - resolution
 
 
 def test_resolve_job_params_portrait_width_less_than_height():
@@ -143,6 +149,7 @@ def test_denom_to_z_between_two_levels_is_fractional():
 # ---------------------------------------------------------------------------
 # ChromeBrowserManager._build_url
 # ---------------------------------------------------------------------------
+# These test will most probably change with the swissgeo webmapviewer
 
 
 def test_build_url_raster_base_url(monkeypatch):
@@ -179,9 +186,9 @@ def test_build_url_contains_z_param(monkeypatch):
 
 def test_build_url_strips_original_z_from_query(monkeypatch):
     monkeypatch.setattr("app.helpers.printing.VIEWER_URL_MAP_RASTER", "http://map")
-    payload = {**_PAYLOAD, "query": "layers=foo&z=99&topic=ech"}
+    payload = {**_PAYLOAD, "query": "layers=ch.swisstopo.pixelkarte-farbe&z=25&topic=ech"}
     url = ChromeBrowserManager()._build_url(payload, _PARAMS)
-    assert "z=99" not in url
+    assert "z=25" not in url
 
 
 def test_build_url_raises_missing_raster_url(monkeypatch):
@@ -212,7 +219,7 @@ def test_build_url_raises_missing_legend_url(monkeypatch):
 def test_render_to_pdf_raises_without_browser(tmp_path):
     mgr = ChromeBrowserManager()
     with pytest.raises(RuntimeError, match="not initialised"):
-        mgr.render_to_pdf(_PAYLOAD, tmp_path / "out.pdf")
+        mgr.render_to_pdf(_PAYLOAD, tmp_path / "4a80ad23a0d62b4102.pdf")
 
 
 # ---------------------------------------------------------------------------
