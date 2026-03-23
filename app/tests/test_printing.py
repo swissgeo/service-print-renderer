@@ -1,13 +1,9 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.config.settings import MATRIX_LV95
 from app.helpers.printing import ChromeBrowserManager, _remove_z_param
-
-# ---------------------------------------------------------------------------
-# Shared fixtures used across tests
-# ---------------------------------------------------------------------------
 
 _PAYLOAD = {
     "format": "a4",
@@ -20,11 +16,6 @@ _PAYLOAD = {
 
 # Minimal params dict as produced by _resolve_job_params
 _PARAMS = {"print_config": "A4_P,96", "z": 6.9}
-
-
-# ---------------------------------------------------------------------------
-# _remove_z_param
-# ---------------------------------------------------------------------------
 
 
 def test_remove_z_param_strips_z():
@@ -53,26 +44,21 @@ def test_remove_z_param_z_not_reintroduced():
     assert "z=3" not in result
 
 
-# ---------------------------------------------------------------------------
-# ChromeBrowserManager.__init__
-# ---------------------------------------------------------------------------
+def test_enter_launches_browser():
+    """__enter__ must start Playwright and launch Chromium."""
+    mock_playwright = MagicMock()
+    mock_browser = MagicMock()
+    mock_playwright.chromium.launch.return_value = mock_browser
 
+    with patch("app.helpers.printing.sync_playwright") as mock_sync_playwright:
+        mock_sync_playwright.return_value.start.return_value = mock_playwright
 
-def test_init_does_not_launch_browser():
-    """Playwright must not be started inside __init__."""
-    mgr = ChromeBrowserManager()
-    assert mgr._playwright is None
-    assert mgr._browser is None
+        mgr = ChromeBrowserManager()
+        result = mgr.__enter__()
 
-
-# ---------------------------------------------------------------------------
-# ChromeBrowserManager._resolve_job_params
-# ---------------------------------------------------------------------------
-# These test will most probably change with the swissgeo webmapviewer
-# The new webmapviewer will probably have the query keys
-# - orientation
-# - format
-# - resolution
+    assert mgr._playwright is mock_playwright
+    assert mgr._browser is mock_browser
+    assert result is mgr
 
 
 def test_resolve_job_params_portrait_width_less_than_height():
@@ -121,11 +107,6 @@ def test_resolve_job_params_scale_used_as_denom():
     assert z_keys[0] <= result["z"] <= z_keys[-1]
 
 
-# ---------------------------------------------------------------------------
-# ChromeBrowserManager._denom_to_z_lv95
-# ---------------------------------------------------------------------------
-
-
 def test_denom_to_z_exact_zoom_level():
     z_target = 7
     denom = MATRIX_LV95[z_target]
@@ -133,55 +114,37 @@ def test_denom_to_z_exact_zoom_level():
 
 
 def test_denom_to_z_result_within_matrix_range():
-    z_keys = list(MATRIX_LV95.keys())
-    result = ChromeBrowserManager._denom_to_z_lv95(500000)
-    assert z_keys[0] <= result <= z_keys[-1]
+    # 500000 falls between z=2 (944882) and z=3 (377953) → precomputed expected
+    assert ChromeBrowserManager._denom_to_z_lv95(500000) == 2.695
 
 
 def test_denom_to_z_between_two_levels_is_fractional():
-    z_keys = list(MATRIX_LV95.keys())
-    z_lo, z_hi = z_keys[4], z_keys[5]
-    mid_denom = (MATRIX_LV95[z_lo] + MATRIX_LV95[z_hi]) // 2
-    result = ChromeBrowserManager._denom_to_z_lv95(mid_denom)
-    assert z_lo < result < z_hi
+    # midpoint between z=4 (188976) and z=5 (75591) → precomputed expected
+    assert ChromeBrowserManager._denom_to_z_lv95(132283) == 4.389
 
 
-# ---------------------------------------------------------------------------
-# ChromeBrowserManager._build_url
-# ---------------------------------------------------------------------------
-# These test will most probably change with the swissgeo webmapviewer
-
-
-def test_build_url_raster_base_url(monkeypatch):
+def test_build_url_raster(monkeypatch):
     monkeypatch.setattr("app.helpers.printing.VIEWER_URL_MAP_RASTER", "http://map-raster")
     url = ChromeBrowserManager()._build_url(_PAYLOAD, _PARAMS)
-    assert url.startswith("http://map-raster?")
+    assert url == (
+        "http://map-raster?layers=ch.swisstopo.pixelkarte-farbe&topic=ech&printConfig=A4_P,96&z=6.9"
+    )
 
 
-def test_build_url_vector_base_url(monkeypatch):
+def test_build_url_vector(monkeypatch):
     monkeypatch.setattr("app.helpers.printing.VIEWER_URL_MAP", "http://map-vector")
-    payload = {**_PAYLOAD, "view": "print_vec_map"}
-    url = ChromeBrowserManager()._build_url(payload, _PARAMS)
-    assert url.startswith("http://map-vector?")
+    url = ChromeBrowserManager()._build_url({**_PAYLOAD, "view": "print_vec_map"}, _PARAMS)
+    assert url == (
+        "http://map-vector?layers=ch.swisstopo.pixelkarte-farbe&topic=ech&printConfig=A4_P,96&z=6.9"
+    )
 
 
-def test_build_url_legend_base_url(monkeypatch):
+def test_build_url_legend(monkeypatch):
     monkeypatch.setattr("app.helpers.printing.VIEWER_URL_LEGEND", "http://legend")
-    payload = {**_PAYLOAD, "view": "print_legend"}
-    url = ChromeBrowserManager()._build_url(payload, _PARAMS)
-    assert url.startswith("http://legend?")
-
-
-def test_build_url_contains_print_config(monkeypatch):
-    monkeypatch.setattr("app.helpers.printing.VIEWER_URL_MAP_RASTER", "http://map")
-    url = ChromeBrowserManager()._build_url(_PAYLOAD, _PARAMS)
-    assert "printConfig=" in url
-
-
-def test_build_url_contains_z_param(monkeypatch):
-    monkeypatch.setattr("app.helpers.printing.VIEWER_URL_MAP_RASTER", "http://map")
-    url = ChromeBrowserManager()._build_url(_PAYLOAD, _PARAMS)
-    assert "&z=" in url
+    url = ChromeBrowserManager()._build_url({**_PAYLOAD, "view": "print_legend"}, _PARAMS)
+    assert url == (
+        "http://legend?layers=ch.swisstopo.pixelkarte-farbe&topic=ech&printConfig=A4_P,96&z=6.9"
+    )
 
 
 def test_build_url_strips_original_z_from_query(monkeypatch):
@@ -211,20 +174,10 @@ def test_build_url_raises_missing_legend_url(monkeypatch):
         ChromeBrowserManager()._build_url(payload, _PARAMS)
 
 
-# ---------------------------------------------------------------------------
-# ChromeBrowserManager.render_to_pdf — browser not initialised
-# ---------------------------------------------------------------------------
-
-
 def test_render_to_pdf_raises_without_browser(tmp_path):
     mgr = ChromeBrowserManager()
     with pytest.raises(RuntimeError, match="not initialised"):
         mgr.render_to_pdf(_PAYLOAD, tmp_path / "4a80ad23a0d62b4102.pdf")
-
-
-# ---------------------------------------------------------------------------
-# ChromeBrowserManager.close
-# ---------------------------------------------------------------------------
 
 
 def test_close_suppresses_browser_exception():

@@ -15,11 +15,6 @@ def mock_table():
         yield table
 
 
-# ---------------------------------------------------------------------------
-# get_print_job
-# ---------------------------------------------------------------------------
-
-
 def test_get_print_job_found(mock_table):
     job = {"job_id": "4a80ad23a0d62b4102", "status": "open"}
     mock_table.get_item.return_value = {"Item": job}
@@ -59,11 +54,6 @@ def test_get_print_job_propagates_client_error(mock_table):
 
     with pytest.raises(ClientError):
         get_print_job("4a80ad23a0d62b4102")
-
-
-# ---------------------------------------------------------------------------
-# update_job_status
-# ---------------------------------------------------------------------------
 
 
 def test_update_job_status_processing(mock_table):
