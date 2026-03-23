@@ -19,8 +19,8 @@ from app.config.settings import (
     AWS_READ_TIMEOUT,
     AWS_REGION,
     LOCALSTACK_ENDPOINT,
+    PRINT_API_BASE_URL,
     S3_BUCKET_NAME,
-    S3_PRESIGNED_URL_EXPIRY,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,15 +87,6 @@ def upload_pdf(job_id: str, pdf_path: Path) -> str:
         logger.exception("Error uploading PDF for job %s to S3", job_id)
         raise
 
-    presigned_url: str = s3.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": S3_BUCKET_NAME, "Key": key},
-        ExpiresIn=S3_PRESIGNED_URL_EXPIRY,
-    )
-    logger.debug(
-        "Generated presigned URL for job %s (expires in %ds): %s",
-        job_id,
-        S3_PRESIGNED_URL_EXPIRY,
-        presigned_url,
-    )
-    return presigned_url
+    pdf_url = f"{PRINT_API_BASE_URL}/api/print/pdf/{key}"
+    logger.debug("PDF URL for job %s: %s", job_id, pdf_url)
+    return pdf_url
