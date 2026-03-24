@@ -5,7 +5,12 @@ from botocore.exceptions import ClientError, ConnectTimeoutError
 
 import pytest
 
-from app.helpers.sqs_queue import delete_message, parse_message_body, receive_messages, send_to_dlq
+from app.helpers.sqs_queue import (
+    delete_message,
+    parse_message_body,
+    receive_messages,
+    send_to_dlq,
+)
 
 
 @pytest.fixture
@@ -18,55 +23,55 @@ def mock_sqs_client():
 
 def test_receive_messages_returns_list(mock_sqs_client):
     job = {"job_id": "4a80ad23a0d62b4102", "status": "open"}
-    mock_sqs_client.get_queue_url.return_value = {"QueueUrl": "http://localhost/queue"}
+    queue_url = "http://localhost/queue"
     mock_sqs_client.receive_message.return_value = {
         "Messages": [{"Body": json.dumps(job), "ReceiptHandle": "handle-1"}]
     }
 
-    messages = receive_messages()
+    messages = receive_messages(queue_url)
 
     assert len(messages) == 1
     assert messages[0]["ReceiptHandle"] == "handle-1"
 
 
 def test_receive_messages_empty(mock_sqs_client):
-    mock_sqs_client.get_queue_url.return_value = {"QueueUrl": "http://localhost/queue"}
+    queue_url = "http://localhost/queue"
     mock_sqs_client.receive_message.return_value = {}
 
-    messages = receive_messages()
+    messages = receive_messages(queue_url)
 
     assert messages == []
 
 
 def test_receive_messages_requests_receive_count_attribute(mock_sqs_client):
-    mock_sqs_client.get_queue_url.return_value = {"QueueUrl": "http://localhost/queue"}
+    queue_url = "http://localhost/queue"
     mock_sqs_client.receive_message.return_value = {}
 
-    receive_messages()
+    receive_messages(queue_url)
 
     call_kwargs = mock_sqs_client.receive_message.call_args[1]
     assert "ApproximateReceiveCount" in call_kwargs.get("AttributeNames", [])
 
 
 def test_receive_messages_propagates_connect_timeout(mock_sqs_client):
-    mock_sqs_client.get_queue_url.return_value = {"QueueUrl": "http://localhost/queue"}
+    queue_url = "http://localhost/queue"
     mock_sqs_client.receive_message.side_effect = ConnectTimeoutError(
         endpoint_url="http://localhost"
     )
 
     with pytest.raises(ConnectTimeoutError):
-        receive_messages()
+        receive_messages(queue_url)
 
 
 def test_receive_messages_propagates_client_error(mock_sqs_client):
-    mock_sqs_client.get_queue_url.return_value = {"QueueUrl": "http://localhost/queue"}
+    queue_url = "http://localhost/queue"
     mock_sqs_client.receive_message.side_effect = ClientError(
         {"Error": {"Code": "AWS.SimpleQueueService.NonExistentQueue", "Message": ""}},
         "ReceiveMessage",
     )
 
     with pytest.raises(ClientError):
-        receive_messages()
+        receive_messages(queue_url)
 
 
 def test_delete_message(mock_sqs_client):
