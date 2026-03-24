@@ -19,9 +19,9 @@ from app.config.settings import (
     AWS_READ_TIMEOUT,
     AWS_REGION,
     LOCALSTACK_ENDPOINT,
-    PRINT_PDF_BASE_URL,
     S3_BUCKET_NAME,
     S3_PDF_CACHE_CONTROL_MAX_AGE,
+    S3_PDF_PREFIX,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ def upload_pdf(job_id: str, pdf_path: Path) -> str:
         ClientError: If the upload fails.
     """
     s3 = get_s3_client()
-    key = f"{job_id}.pdf"
+    key = f"{S3_PDF_PREFIX}/{job_id}.pdf" if S3_PDF_PREFIX else f"{job_id}.pdf"
     try:
         s3.upload_file(
             str(pdf_path),
@@ -91,9 +91,6 @@ def upload_pdf(job_id: str, pdf_path: Path) -> str:
         logger.exception("Error uploading PDF for job %s to S3", job_id)
         raise
 
-    if AWS_LOCAL:
-        pdf_url = f"{LOCALSTACK_ENDPOINT}/{S3_BUCKET_NAME}/{key}"
-    else:
-        pdf_url = f"{PRINT_PDF_BASE_URL}/{key}"
+    pdf_url = f"{LOCALSTACK_ENDPOINT}/{S3_BUCKET_NAME}/{key}" if AWS_LOCAL else f"/{key}"
     logger.debug("PDF URL for job %s: %s", job_id, pdf_url)
     return pdf_url

@@ -118,7 +118,6 @@ The service is configured entirely via environment variables:
 | `SQS_WAIT_TIME_SECONDS` | `20` | Long-polling wait time in seconds when reading from SQS |
 | `SQS_MAX_MESSAGES` | `1` | Maximum number of messages to retrieve per SQS poll |
 | `S3_BUCKET_NAME` | `service-print-jobs-local` | S3 bucket where rendered PDFs are stored |
-| `PRINT_PDF_BASE_URL` | — | Base URL used to construct the `pdf_url` stored in DynamoDB (`<base>/<job_id>.pdf`); must be set to the CloudFront distribution URL in production (unused when `AWS_LOCAL=true`) |
 | `S3_PDF_CACHE_CONTROL_MAX_AGE` | `3600` | TTL in seconds for the `Cache-Control: max-age` header set on PDFs uploaded to S3; controls how long CloudFront and browsers cache the PDF |
 | `VIEWER_URL_MAP_RASTER` | — | Webmapviewer endpoint for raster map printing (**required**) |
 | `VIEWER_URL_MAP` | — | Webmapviewer endpoint for vector-tile map printing |

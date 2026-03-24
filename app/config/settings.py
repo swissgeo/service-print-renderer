@@ -41,7 +41,7 @@ if AWS_LOCAL:
 
 # S3
 S3_BUCKET_NAME: str = os.environ.get("S3_BUCKET_NAME", "service-print-pdf-local")
-PRINT_PDF_BASE_URL: str = os.environ.get("PRINT_PDF_BASE_URL", "")
+S3_PDF_PREFIX: str = os.environ.get("S3_PDF_PREFIX", "api/print/pdf")
 S3_PDF_CACHE_CONTROL_MAX_AGE: int = int(os.environ.get("S3_PDF_CACHE_CONTROL_MAX_AGE", "3600"))
 
 # Webmapviewer endpoints
