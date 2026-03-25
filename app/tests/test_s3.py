@@ -4,7 +4,7 @@ from botocore.exceptions import ClientError
 
 import pytest
 
-from app.config.settings import S3_BUCKET_NAME
+from app.config.settings import LOCALSTACK_ENDPOINT, S3_BUCKET_NAME, S3_PDF_PREFIX
 from app.helpers.s3 import upload_pdf
 
 
@@ -16,19 +16,26 @@ def mock_s3_client():
         yield client
 
 
-def test_upload_pdf_success(mock_s3_client, tmp_path):
+@pytest.mark.usefixtures("mock_s3_client")
+def test_upload_pdf_returns_s3_url(tmp_path):
     pdf = tmp_path / "test.pdf"
     pdf.write_bytes(b"%PDF-1.4 fake content")
 
-    result = upload_pdf("job-123", pdf)
+    with patch("app.helpers.s3.AWS_LOCAL", new=False):
+        result = upload_pdf("job-123", pdf)
 
-    assert result.endswith("/api/print/pdf/job-123.pdf")
-    mock_s3_client.upload_file.assert_called_once_with(
-        str(pdf),
-        S3_BUCKET_NAME,
-        "job-123.pdf",
-        ExtraArgs={"ContentType": "application/pdf"},
-    )
+    assert result == f"/{S3_PDF_PREFIX}/job-123.pdf"
+
+
+@pytest.mark.usefixtures("mock_s3_client")
+def test_upload_pdf_returns_localstack_url(tmp_path):
+    pdf = tmp_path / "test.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake content")
+
+    with patch("app.helpers.s3.AWS_LOCAL", new=True):
+        result = upload_pdf("job-123", pdf)
+
+    assert result == f"{LOCALSTACK_ENDPOINT}/{S3_BUCKET_NAME}/{S3_PDF_PREFIX}/job-123.pdf"
 
 
 def test_upload_pdf_propagates_client_error(mock_s3_client, tmp_path):
