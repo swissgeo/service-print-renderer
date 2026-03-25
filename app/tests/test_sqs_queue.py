@@ -75,9 +75,8 @@ def test_receive_messages_propagates_client_error(mock_sqs_client):
 
 
 def test_delete_message(mock_sqs_client):
-    mock_sqs_client.get_queue_url.return_value = {"QueueUrl": "http://localhost/queue"}
 
-    delete_message("4a80ad23a0d62b4102")
+    delete_message("4a80ad23a0d62b4102", "http://localhost/queue")
 
     mock_sqs_client.delete_message.assert_called_once_with(
         QueueUrl="http://localhost/queue",
@@ -86,13 +85,12 @@ def test_delete_message(mock_sqs_client):
 
 
 def test_delete_message_propagates_client_error(mock_sqs_client):
-    mock_sqs_client.get_queue_url.return_value = {"QueueUrl": "http://localhost/queue"}
     mock_sqs_client.delete_message.side_effect = ClientError(
         {"Error": {"Code": "ReceiptHandleIsInvalid", "Message": ""}}, "DeleteMessage"
     )
 
     with pytest.raises(ClientError):
-        delete_message("bad-handle")
+        delete_message("bad-handle", "http://localhost/queue")
 
 
 def test_send_to_dlq_calls_send_message(mock_sqs_client):

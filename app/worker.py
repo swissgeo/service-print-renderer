@@ -101,7 +101,7 @@ def handle_message(
             finished_timestamp_iso_8601=get_iso_8601_timestamp(),
             pdf_url=pdf_url,
         )
-        delete_message(receipt_handle)
+        delete_message(receipt_handle, get_queue_url())
         logger.info("Job %s completed successfully", job_id)
     except Exception as exc:
         logger.exception("Job %s failed during processing", job_id)
@@ -139,7 +139,7 @@ def handle_dlq_message(job_id: str, receipt_handle: str) -> None:
         else:
             logger.debug("Job %s already has error status, skipping update", job_id)
 
-        delete_message(receipt_handle)
+        delete_message(receipt_handle, get_dlq_url())
         logger.debug("Deleted DLQ message for job %s", job_id)
     except Exception as exc:
         logger.exception("Failed to process DLQ message for job %s", job_id)
@@ -180,7 +180,7 @@ def run() -> None:
                             message.get("Body"),
                         )
                         send_to_dlq(message.get("Body", ""))
-                        delete_message(receipt_handle)
+                        delete_message(receipt_handle, get_queue_url())
                         continue
 
                     handle_message(job_id, receipt_handle, job, receive_count, browser)
@@ -200,7 +200,7 @@ def run() -> None:
                                 "Malformed DLQ message, deleting: %s",
                                 message.get("Body"),
                             )
-                            delete_message(receipt_handle)
+                            delete_message(receipt_handle, get_dlq_url())
 
                 except Exception:
                     logger.exception("Error processing DLQ messages, continuing...")

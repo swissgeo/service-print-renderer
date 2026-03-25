@@ -94,26 +94,26 @@ def receive_messages(queue_url: str) -> list[dict[str, Any]]:
     return messages  # type: ignore[return-value]
 
 
-def delete_message(receipt_handle: str) -> None:
+def delete_message(receipt_handle: str, queue_url: str) -> None:
     """
     Deletes a successfully processed message from the SQS queue.
 
     Args:
         receipt_handle: The receipt handle returned by receive_message.
+        queue_url: The URL of the queue from which to delete the message.
     """
     sqs = get_sqs_client()
     try:
-        queue_url = get_queue_url()
         sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
-        logger.debug("Deleted message from SQS queue %s", SQS_QUEUE_NAME)
+        logger.debug("Deleted message from SQS queue %s", queue_url)
     except ConnectTimeoutError:
-        logger.exception("Connection timeout deleting message from SQS queue %s", SQS_QUEUE_NAME)
+        logger.exception("Connection timeout deleting message from SQS queue %s", queue_url)
         raise
     except ReadTimeoutError:
-        logger.exception("Read timeout deleting message from SQS queue %s", SQS_QUEUE_NAME)
+        logger.exception("Read timeout deleting message from SQS queue %s", queue_url)
         raise
     except ClientError:
-        logger.exception("Error deleting message from SQS queue %s", SQS_QUEUE_NAME)
+        logger.exception("Error deleting message from SQS queue %s", queue_url)
         raise
 
 
