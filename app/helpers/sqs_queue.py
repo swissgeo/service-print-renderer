@@ -12,8 +12,8 @@ from app.config.settings import (
     AWS_LOCAL,
     AWS_READ_TIMEOUT,
     AWS_REGION,
-    LOCALSTACK_ENDPOINT,
     SQS_DL_QUEUE_NAME,
+    SQS_ENDPOINT,
     SQS_MAX_MESSAGES,
     SQS_QUEUE_NAME,
     SQS_WAIT_TIME_SECONDS,
@@ -41,7 +41,7 @@ def get_sqs_client() -> SQSClient:
             logger.info("Connecting to locally running SQS")
             sqs = boto3.client(
                 "sqs",
-                endpoint_url=LOCALSTACK_ENDPOINT,
+                endpoint_url=SQS_ENDPOINT,
                 region_name=AWS_REGION,
                 config=boto_config,
             )

@@ -126,7 +126,9 @@ dockerrun: dockerbuild ## Run the locally built docker image
 		-it \
 		--env-file=${ENV_FILE} \
 		--network shared_network_local \
-		-e LOCALSTACK_ENDPOINT=http://localstack:${LOCALSTACK_PORT} \
+		-e DYNAMODB_ENDPOINT=http://dynamodb-local:8000 \
+		-e SQS_ENDPOINT=http://elasticmq:9324 \
+		-e S3_ENDPOINT=http://minio:9000 \
 		$(DOCKER_IMG_LOCAL_TAG)
 
 

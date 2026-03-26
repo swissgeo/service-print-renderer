@@ -13,7 +13,11 @@ if ENV_FILE:
     load_dotenv(ENV_FILE, override=True, verbose=True)
 
 
-LOCALSTACK_ENDPOINT = os.environ.get("LOCALSTACK_ENDPOINT", "http://localhost:4566")
+DYNAMODB_ENDPOINT = os.environ.get("DYNAMODB_ENDPOINT", "http://localhost:8000")
+SQS_ENDPOINT = os.environ.get("SQS_ENDPOINT", "http://localhost:9324")
+S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://localhost:9000")
+S3_ACCESS_KEY_ID = os.environ.get("MINIO_ROOT_USER", "minioadmin")
+S3_SECRET_ACCESS_KEY = os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin")
 AWS_REGION = os.environ.get("AWS_REGION", "eu-central-1")
 
 DYNAMODB_TABLE_NAME: str = str(os.environ.get("DYNAMODB_TABLE_NAME", "service-print-jobs-local"))
