@@ -16,7 +16,6 @@ from app.config.settings import (
     SQS_DL_QUEUE_NAME,
     SQS_MAX_MESSAGES,
     SQS_QUEUE_NAME,
-    SQS_WAIT_TIME_SECONDS,
 )
 
 if TYPE_CHECKING:
@@ -61,9 +60,12 @@ def get_queue_url() -> str:
     return sqs.get_queue_url(QueueName=SQS_QUEUE_NAME)["QueueUrl"]
 
 
-def receive_messages() -> list[dict[str, Any]]:
+def receive_messages(queue_url: str, wait_time_seconds: int) -> list[dict[str, Any]]:
     """
-    Polls the SQS queue for messages using long polling.
+    Polls an SQS queue for messages using long polling.
+
+    Args:
+        queue_url: The URL of the queue to poll.
 
     Returns a list of raw SQS message dicts. Each message contains at least
     'Body' (JSON string of the job item), 'ReceiptHandle' (needed for deletion),
@@ -71,47 +73,46 @@ def receive_messages() -> list[dict[str, Any]]:
     """
     sqs = get_sqs_client()
     try:
-        queue_url = get_queue_url()
         response = sqs.receive_message(
             QueueUrl=queue_url,
             MaxNumberOfMessages=SQS_MAX_MESSAGES,
-            WaitTimeSeconds=SQS_WAIT_TIME_SECONDS,
+            WaitTimeSeconds=wait_time_seconds,
             AttributeNames=["ApproximateReceiveCount"],
         )
         messages = response.get("Messages", [])
-        logger.debug("Received %d message(s) from SQS queue %s", len(messages), SQS_QUEUE_NAME)
+        logger.debug("Received %d message(s) from SQS queue %s", len(messages), queue_url)
     except ConnectTimeoutError:
-        logger.exception("Connection timeout receiving messages from SQS queue %s", SQS_QUEUE_NAME)
+        logger.exception("Connection timeout receiving messages from SQS queue %s", queue_url)
         raise
     except ReadTimeoutError:
-        logger.exception("Read timeout receiving messages from SQS queue %s", SQS_QUEUE_NAME)
+        logger.exception("Read timeout receiving messages from SQS queue %s", queue_url)
         raise
     except ClientError:
-        logger.exception("Error receiving messages from SQS queue %s", SQS_QUEUE_NAME)
+        logger.exception("Error receiving messages from SQS queue %s", queue_url)
         raise
     return messages  # type: ignore[return-value]
 
 
-def delete_message(receipt_handle: str) -> None:
+def delete_message(receipt_handle: str, queue_url: str) -> None:
     """
     Deletes a successfully processed message from the SQS queue.
 
     Args:
         receipt_handle: The receipt handle returned by receive_message.
+        queue_url: The URL of the queue from which to delete the message.
     """
     sqs = get_sqs_client()
     try:
-        queue_url = get_queue_url()
         sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
-        logger.debug("Deleted message from SQS queue %s", SQS_QUEUE_NAME)
+        logger.debug("Deleted message from SQS queue %s", queue_url)
     except ConnectTimeoutError:
-        logger.exception("Connection timeout deleting message from SQS queue %s", SQS_QUEUE_NAME)
+        logger.exception("Connection timeout deleting message from SQS queue %s", queue_url)
         raise
     except ReadTimeoutError:
-        logger.exception("Read timeout deleting message from SQS queue %s", SQS_QUEUE_NAME)
+        logger.exception("Read timeout deleting message from SQS queue %s", queue_url)
         raise
     except ClientError:
-        logger.exception("Error deleting message from SQS queue %s", SQS_QUEUE_NAME)
+        logger.exception("Error deleting message from SQS queue %s", queue_url)
         raise
 
 

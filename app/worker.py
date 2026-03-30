@@ -20,15 +20,24 @@ from opentelemetry.trace import SpanKind, StatusCode
 from app.config.settings import (
     BROWSER_RECYCLE_AFTER_JOBS,
     LIVENESS_PROBE_FILE,
+    SQS_DLQ_WAIT_TIME_SECONDS,
     SQS_MAX_RECEIVE_COUNT,
+    SQS_WAIT_TIME_SECONDS,
     STARTUP_PROBE_FILE,
 )
-from app.helpers.dynamo_db import update_job_status
+from app.helpers.dynamo_db import get_print_job, update_job_status
 from app.helpers.gpu_info import log_gpu_info
 from app.helpers.otel import initialize, setup_trace_provider, traced
 from app.helpers.printing import ChromeBrowserManager
 from app.helpers.s3 import upload_pdf
-from app.helpers.sqs_queue import delete_message, parse_message_body, receive_messages, send_to_dlq
+from app.helpers.sqs_queue import (
+    delete_message,
+    get_dlq_url,
+    get_queue_url,
+    parse_message_body,
+    receive_messages,
+    send_to_dlq,
+)
 from app.helpers.utils import get_iso_8601_timestamp, init_logging, touch_probe_file
 
 logger = logging.getLogger(__name__)
@@ -94,7 +103,7 @@ def handle_message(
             finished_timestamp_iso_8601=get_iso_8601_timestamp(),
             pdf_url=pdf_url,
         )
-        delete_message(receipt_handle)
+        delete_message(receipt_handle, get_queue_url())
         logger.info("Job %s completed successfully", job_id)
     except Exception as exc:
         logger.exception("Job %s failed during processing", job_id)
@@ -110,6 +119,36 @@ def handle_message(
             # moves the message to the DLQ via the redrive policy.
 
 
+@traced("worker.handle_dlq_message", kind=SpanKind.CONSUMER)
+def handle_dlq_message(job_id: str, receipt_handle: str) -> None:
+    """
+    Handle a single DLQ message: update the job status to 'error' in DynamoDB
+    if it's not already set to 'error', then delete the message from the DLQ.
+    """
+    trace.get_current_span().set_attribute("job.id", job_id)
+    try:
+        job_item = get_print_job(job_id)
+        current_status = job_item.get("status", None) if job_item else None
+
+        if current_status != "error":
+            update_job_status(
+                job_id,
+                "error",
+                finished_timestamp_iso_8601=get_iso_8601_timestamp(),
+                message="Job moved to DLQ after max retries",
+            )
+            logger.info("Updated job %s status to error from DLQ", job_id)
+        else:
+            logger.debug("Job %s already has error status, skipping update", job_id)
+
+        delete_message(receipt_handle, get_dlq_url())
+        logger.debug("Deleted DLQ message for job %s", job_id)
+    except Exception as exc:
+        logger.exception("Failed to process DLQ message for job %s", job_id)
+        trace.get_current_span().set_status(StatusCode.ERROR, str(exc))
+        # Don't delete the message if processing failed
+
+
 def run() -> None:
     """Main polling loop. Runs until a SIGTERM/SIGINT is received."""
     logger.info("Worker started, polling SQS queue...")
@@ -123,7 +162,7 @@ def run() -> None:
             ):
                 touch_probe_file(LIVENESS_PROBE_FILE)
                 try:
-                    messages = receive_messages()
+                    messages = receive_messages(get_queue_url(), SQS_WAIT_TIME_SECONDS)
                 except Exception:
                     logger.exception("Error receiving messages from SQS, retrying...")
                     continue
@@ -143,11 +182,30 @@ def run() -> None:
                             message.get("Body"),
                         )
                         send_to_dlq(message.get("Body", ""))
-                        delete_message(receipt_handle)
+                        delete_message(receipt_handle, get_queue_url())
                         continue
 
                     handle_message(job_id, receipt_handle, job, receive_count, browser)
                     jobs_processed += 1
+
+                # Process DLQ messages
+                try:
+                    dlq_messages = receive_messages(get_dlq_url(), SQS_DLQ_WAIT_TIME_SECONDS)
+                    for message in dlq_messages:
+                        try:
+                            job = parse_message_body(message)
+                            job_id: str = job["job_id"]
+                            receipt_handle: str = message["ReceiptHandle"]
+                            handle_dlq_message(job_id, receipt_handle)
+                        except KeyError, ValueError:
+                            logger.exception(
+                                "Malformed DLQ message, deleting: %s",
+                                message.get("Body"),
+                            )
+                            delete_message(receipt_handle, get_dlq_url())
+
+                except Exception:
+                    logger.exception("Error processing DLQ messages, continuing...")
 
             if not _shutdown:
                 logger.info("Recycling Chrome after %d jobs", jobs_processed)
