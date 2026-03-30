@@ -123,23 +123,6 @@ def get_dlq_url() -> str:
     return sqs.get_queue_url(QueueName=SQS_DL_QUEUE_NAME)["QueueUrl"]
 
 
-def send_to_dlq(message_body: str) -> None:
-    """
-    Sends a message body directly to the dead-letter queue.
-
-    Args:
-        message_body: The raw message body string to forward.
-    """
-    sqs = get_sqs_client()
-    try:
-        dlq_url = get_dlq_url()
-        sqs.send_message(QueueUrl=dlq_url, MessageBody=message_body)
-        logger.debug("Sent message to DLQ %s", SQS_DL_QUEUE_NAME)
-    except ClientError:
-        logger.exception("Error sending message to DLQ %s", SQS_DL_QUEUE_NAME)
-        raise
-
-
 def parse_message_body(message: dict[str, Any]) -> dict[str, Any]:
     """Deserializes the JSON body of an SQS message into a dict."""
     return dict(json.loads(message["Body"]))

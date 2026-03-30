@@ -9,7 +9,6 @@ from app.helpers.sqs_queue import (
     delete_message,
     parse_message_body,
     receive_messages,
-    send_to_dlq,
 )
 
 
@@ -91,29 +90,6 @@ def test_delete_message_propagates_client_error(mock_sqs_client):
 
     with pytest.raises(ClientError):
         delete_message("bad-handle", "http://localhost/queue")
-
-
-def test_send_to_dlq_calls_send_message(mock_sqs_client):
-    mock_sqs_client.get_queue_url.return_value = {"QueueUrl": "http://localhost/dlq"}
-    body = '{"job_id": "bad-job", "raw": true}'
-
-    send_to_dlq(body)
-
-    mock_sqs_client.send_message.assert_called_once_with(
-        QueueUrl="http://localhost/dlq",
-        MessageBody=body,
-    )
-
-
-def test_send_to_dlq_propagates_client_error(mock_sqs_client):
-    mock_sqs_client.get_queue_url.return_value = {"QueueUrl": "http://localhost/dlq"}
-    mock_sqs_client.send_message.side_effect = ClientError(
-        {"Error": {"Code": "AWS.SimpleQueueService.NonExistentQueue", "Message": ""}},
-        "SendMessage",
-    )
-
-    with pytest.raises(ClientError):
-        send_to_dlq("some body")
 
 
 def test_parse_message_body():
