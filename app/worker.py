@@ -36,7 +36,6 @@ from app.helpers.sqs_queue import (
     get_queue_url,
     parse_message_body,
     receive_messages,
-    send_to_dlq,
 )
 from app.helpers.utils import get_iso_8601_timestamp, init_logging, touch_probe_file
 
@@ -178,10 +177,9 @@ def run() -> None:
                         job_id: str = job["job_id"]
                     except KeyError, ValueError:
                         logger.exception(
-                            "Malformed SQS message, sending directly to DLQ: %s",
+                            "Malformed SQS message, deleting: %s",
                             message.get("Body"),
                         )
-                        send_to_dlq(message.get("Body", ""))
                         delete_message(receipt_handle, get_queue_url())
                         continue
 

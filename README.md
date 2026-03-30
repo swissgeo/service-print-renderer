@@ -116,7 +116,7 @@ The service is configured entirely via environment variables:
 | `SQS_MAX_RECEIVE_COUNT` | `3` | Number of times a message can be received before SQS routes it to the DLQ automatically |
 | `SQS_VISIBILITY_TIMEOUT` | `60` | How long (in seconds) a received message is hidden from other consumers; after expiry SQS redelivers it (or routes to DLQ if `maxReceiveCount` is reached) |
 | `SQS_WAIT_TIME_SECONDS` | `20` | Long-polling wait time in seconds when reading from SQS |
-| `SQS_DLQ_WAIT_TIME_SECONDS` | `2` | Long-polling wait time in seconds when reading from SQS DLQ |
+| `SQS_DLQ_WAIT_TIME_SECONDS` | `2` | Polling wait time in seconds when reading from SQS DLQ |
 | `SQS_MAX_MESSAGES` | `1` | Maximum number of messages to retrieve per SQS poll |
 | `S3_BUCKET_NAME` | `service-print-jobs-local` | S3 bucket where rendered PDFs are stored |
 | `S3_PDF_CACHE_CONTROL_MAX_AGE` | `3600` | TTL in seconds for the `Cache-Control: max-age` header set on PDFs uploaded to S3; controls how long CloudFront and browsers cache the PDF |
