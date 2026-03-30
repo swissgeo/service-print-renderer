@@ -20,7 +20,9 @@ from opentelemetry.trace import SpanKind, StatusCode
 from app.config.settings import (
     BROWSER_RECYCLE_AFTER_JOBS,
     LIVENESS_PROBE_FILE,
+    SQS_DLQ_WAIT_TIME_SECONDS,
     SQS_MAX_RECEIVE_COUNT,
+    SQS_WAIT_TIME_SECONDS,
     STARTUP_PROBE_FILE,
 )
 from app.helpers.dynamo_db import get_print_job, update_job_status
@@ -160,7 +162,7 @@ def run() -> None:
             ):
                 touch_probe_file(LIVENESS_PROBE_FILE)
                 try:
-                    messages = receive_messages(get_queue_url())
+                    messages = receive_messages(get_queue_url(), SQS_WAIT_TIME_SECONDS)
                 except Exception:
                     logger.exception("Error receiving messages from SQS, retrying...")
                     continue
@@ -188,7 +190,7 @@ def run() -> None:
 
                 # Process DLQ messages
                 try:
-                    dlq_messages = receive_messages(get_dlq_url())
+                    dlq_messages = receive_messages(get_dlq_url(), SQS_DLQ_WAIT_TIME_SECONDS)
                     for message in dlq_messages:
                         try:
                             job = parse_message_body(message)

@@ -16,7 +16,6 @@ from app.config.settings import (
     SQS_DL_QUEUE_NAME,
     SQS_MAX_MESSAGES,
     SQS_QUEUE_NAME,
-    SQS_WAIT_TIME_SECONDS,
 )
 
 if TYPE_CHECKING:
@@ -61,7 +60,7 @@ def get_queue_url() -> str:
     return sqs.get_queue_url(QueueName=SQS_QUEUE_NAME)["QueueUrl"]
 
 
-def receive_messages(queue_url: str) -> list[dict[str, Any]]:
+def receive_messages(queue_url: str, wait_time_seconds: int) -> list[dict[str, Any]]:
     """
     Polls an SQS queue for messages using long polling.
 
@@ -77,7 +76,7 @@ def receive_messages(queue_url: str) -> list[dict[str, Any]]:
         response = sqs.receive_message(
             QueueUrl=queue_url,
             MaxNumberOfMessages=SQS_MAX_MESSAGES,
-            WaitTimeSeconds=SQS_WAIT_TIME_SECONDS,
+            WaitTimeSeconds=wait_time_seconds,
             AttributeNames=["ApproximateReceiveCount"],
         )
         messages = response.get("Messages", [])
