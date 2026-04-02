@@ -13,7 +13,7 @@
 - [Setup and Run](#setup-and-run)
   - [Prerequisites](#prerequisites)
   - [Setup](#setup)
-  - [Start LocalStack](#start-localstack)
+  - [Start Ministack](#start-ministack)
   - [Run](#run)
   - [Test](#test)
 - [Deployment configuration](#deployment-configuration)
@@ -57,18 +57,18 @@ make setup
 
 `make setup` creates the virtual environment, installs all dependencies.
 
-### Start LocalStack
+### Start Ministack
 
 Start the local AWS stack (DynamoDB, SQS, S3) and create the required resources:
 
 > [!NOTE]
-> Maybe you want to start the local stack from the project `service-print-api` it is starting exactly the same local stack as in this project. Doing so, you have the possibility to test the entire print procedure.
+> Maybe you want to start the local stack from the project `service-print-api` — it starts exactly the same stack as in this project. Doing so, you have the possibility to test the entire print procedure.
 
 ```bash
-make start-localstack
+make start-ministack
 ```
 
-This runs `docker compose up -d` which starts LocalStack and the following init containers:
+This runs `docker compose up -d` which starts [Ministack](https://ministack.org/) and the following init containers:
 
 | Container | Action |
 | --------- | ------ |
@@ -105,8 +105,8 @@ The service is configured entirely via environment variables:
 
 | Env | Default | Description |
 | --- | ------- | ----------- |
-| `AWS_LOCAL` | `false` | Set to `true` to point AWS clients at LocalStack instead of real AWS |
-| `LOCALSTACK_ENDPOINT` | `http://localhost:4566` | Endpoint URL of the LocalStack instance (local development only) |
+| `AWS_LOCAL` | `false` | Set to `true` to point AWS clients at Ministack instead of real AWS |
+| `LOCALSTACK_ENDPOINT` | `http://localhost:4566` | Endpoint URL of the Ministack instance (local development only) |
 | `AWS_REGION` | `eu-central-1` | AWS region |
 | `AWS_CONNECT_TIMEOUT` | `5` | Timeout in seconds for establishing a connection to AWS services |
 | `AWS_READ_TIMEOUT` | `30` | Timeout in seconds for reading a response from AWS services |

@@ -1,6 +1,6 @@
 services:
   localstack:
-    image: localstack/localstack
+    image: nahuelnucera/ministack
     container_name: localstack
     ports:
       - "${LOCALSTACK_PORT}:4566"

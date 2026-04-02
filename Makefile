@@ -136,8 +136,8 @@ lint: ## Run the linter on the code base and type-checker ty
 	$(TY) check
 
 
-.PHONY: start-localstack
-start-localstack: ## Run dynamodb and sqs locally
+.PHONY: start-ministack
+start-ministack: ## Run ministack locally (emulates DynamoDB, SQS, S3)
 	docker compose --env-file=${ENV_FILE} up -d
 
 
