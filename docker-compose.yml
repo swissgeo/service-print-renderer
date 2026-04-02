@@ -1,14 +1,11 @@
 services:
-  localstack:
-    image: localstack/localstack
-    container_name: localstack
+  moto-server:
+    image: motoserver/moto
+    container_name: moto-server
     ports:
-      - "${LOCALSTACK_PORT}:4566"
-    environment:
-      - SERVICES=dynamodb,s3,sqs
-      - DEBUG=1
+      - "${MOTO_PORT:-5000}:5000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "${LOCALSTACK_ENDPOINT}/_localstack/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000')"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -17,22 +14,18 @@ services:
 
   init-dynamo:
     image: amazon/aws-cli
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - dynamodb
-      - create-table
-      - --table-name
-      - ${DYNAMODB_TABLE_NAME}
-      - --attribute-definitions
-      - AttributeName=job_id,AttributeType=S
-      - --key-schema
-      - AttributeName=job_id,KeyType=HASH
-      - --provisioned-throughput
-      - ReadCapacityUnits=2,WriteCapacityUnits=1
-      - --endpoint-url
-      - http://localstack:${LOCALSTACK_PORT}
-    depends_on:
-      localstack:
-        condition: service_healthy
+      - |
+        until aws dynamodb list-tables --endpoint-url http://moto-server:5000 >/dev/null 2>&1; do
+          echo "Waiting for moto-server..."; sleep 2
+        done
+        aws dynamodb create-table \
+          --table-name ${DYNAMODB_TABLE_NAME} \
+          --attribute-definitions AttributeName=job_id,AttributeType=S \
+          --key-schema AttributeName=job_id,KeyType=HASH \
+          --provisioned-throughput ReadCapacityUnits=2,WriteCapacityUnits=1 \
+          --endpoint-url http://moto-server:5000 || true
     environment:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
@@ -45,15 +38,18 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        aws sqs create-queue --queue-name ${SQS_DL_QUEUE_NAME} --endpoint-url http://localstack:${LOCALSTACK_PORT}
-        DLQ_ARN="arn:aws:sqs:${AWS_REGION}:000000000000:${SQS_DL_QUEUE_NAME}"
+        until aws sqs list-queues --endpoint-url http://moto-server:5000 >/dev/null 2>&1; do
+          echo "Waiting for moto-server..."; sleep 2
+        done
+        aws sqs create-queue --queue-name ${SQS_DL_QUEUE_NAME} --endpoint-url http://moto-server:5000
+        DLQ_URL=$$(aws sqs get-queue-url --queue-name ${SQS_DL_QUEUE_NAME} --endpoint-url http://moto-server:5000 --query 'QueueUrl' --output text)
+        DLQ_ARN=$$(aws sqs get-queue-attributes --queue-url $$DLQ_URL --endpoint-url http://moto-server:5000 --attribute-names QueueArn --query 'Attributes.QueueArn' --output text)
+        REDRIVE=$$(printf '{"deadLetterTargetArn":"%s","maxReceiveCount":"%s"}' "$$DLQ_ARN" "${SQS_MAX_RECEIVE_COUNT}")
+        ESCAPED=$$(echo "$$REDRIVE" | sed 's/"/\\"/g')
         aws sqs create-queue \
           --queue-name ${SQS_QUEUE_NAME} \
-          --endpoint-url http://localstack:${LOCALSTACK_PORT} \
-          --attributes "RedrivePolicy={\"deadLetterTargetArn\":\"$${DLQ_ARN}\",\"maxReceiveCount\":\"${SQS_MAX_RECEIVE_COUNT}\"},VisibilityTimeout=${SQS_VISIBILITY_TIMEOUT}"
-    depends_on:
-      localstack:
-        condition: service_healthy
+          --endpoint-url http://moto-server:5000 \
+          --attributes "{\"RedrivePolicy\":\"$$ESCAPED\",\"VisibilityTimeout\":\"${SQS_VISIBILITY_TIMEOUT}\"}"
     environment:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
@@ -65,18 +61,20 @@ services:
 
   init-s3:
     image: amazon/aws-cli
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - s3api
-      - create-bucket
-      - --bucket
-      - ${S3_BUCKET_NAME}
-      - --endpoint-url
-      - http://localstack:${LOCALSTACK_PORT}
-      - --create-bucket-configuration
-      - LocationConstraint=${AWS_REGION}
-    depends_on:
-      localstack:
-        condition: service_healthy
+      - |
+        until aws s3api list-buckets --endpoint-url http://moto-server:5000 >/dev/null 2>&1; do
+          echo "Waiting for moto-server..."; sleep 2
+        done
+        aws s3api create-bucket \
+          --bucket ${S3_BUCKET_NAME} \
+          --endpoint-url http://moto-server:5000 \
+          --create-bucket-configuration LocationConstraint=${AWS_REGION} || true
+        aws s3api put-bucket-policy \
+          --bucket ${S3_BUCKET_NAME} \
+          --endpoint-url http://moto-server:5000 \
+          --policy '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::${S3_BUCKET_NAME}/*"}]}'
     environment:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}

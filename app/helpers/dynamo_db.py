@@ -16,7 +16,7 @@ from app.config.settings import (
     AWS_READ_TIMEOUT,
     AWS_REGION,
     DYNAMODB_TABLE_NAME,
-    LOCALSTACK_ENDPOINT,
+    MOTO_ENDPOINT,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ def get_dynamodb() -> DynamoDBServiceResource:
                 "DynamoDBServiceResource",
                 boto3.resource(
                     "dynamodb",
-                    endpoint_url=LOCALSTACK_ENDPOINT,
+                    endpoint_url=MOTO_ENDPOINT,
                     region_name=AWS_REGION,
                     config=boto_config,
                 ),

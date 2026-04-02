@@ -4,7 +4,7 @@ from botocore.exceptions import ClientError
 
 import pytest
 
-from app.config.settings import LOCALSTACK_ENDPOINT, S3_BUCKET_NAME, S3_PDF_PREFIX
+from app.config.settings import MOTO_ENDPOINT, S3_BUCKET_NAME, S3_PDF_PREFIX
 from app.helpers.s3 import upload_pdf
 
 
@@ -35,7 +35,7 @@ def test_upload_pdf_returns_localstack_url(tmp_path):
     with patch("app.helpers.s3.AWS_LOCAL", new=True):
         result = upload_pdf("job-123", pdf)
 
-    assert result == f"{LOCALSTACK_ENDPOINT}/{S3_BUCKET_NAME}/{S3_PDF_PREFIX}/job-123.pdf"
+    assert result == f"{MOTO_ENDPOINT}/{S3_BUCKET_NAME}/{S3_PDF_PREFIX}/job-123.pdf"
 
 
 def test_upload_pdf_propagates_client_error(mock_s3_client, tmp_path):
