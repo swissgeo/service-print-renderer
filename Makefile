@@ -138,7 +138,7 @@ lint: ## Run the linter on the code base and type-checker ty
 
 .PHONY: start-moto
 start-moto: ## Run moto server locally and initialize resources (DynamoDB, SQS, S3)
-	docker inspect moto-server >/dev/null 2>&1 || docker compose --env-file=${ENV_FILE} up -d moto-server
+	docker inspect --format='{{.State.Running}}' moto-server 2>/dev/null | grep -q true || docker compose --env-file=${ENV_FILE} up -d moto-server
 	docker compose --env-file=${ENV_FILE} up --remove-orphans init-dynamo init-sqs init-s3
 
 
