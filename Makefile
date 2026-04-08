@@ -126,7 +126,7 @@ dockerrun: start-moto dockerbuild ## Run the locally built docker image
 		-it \
 		--env-file=${ENV_FILE} \
 		--network shared_network_local \
-		-e MOTO_ENDPOINT=http://moto-server:5000 \
+		-e MOTO_HOST=moto-server \
 		$(DOCKER_IMG_LOCAL_TAG)
 
 

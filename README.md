@@ -108,7 +108,8 @@ The service is configured entirely via environment variables:
 | Env | Default | Description |
 | --- | ------- | ----------- |
 | `AWS_LOCAL` | `false` | Set to `true` to point AWS clients at the moto server instead of real AWS |
-| `MOTO_ENDPOINT` | `http://localhost:5000` | Endpoint URL of the moto server (local development only) |
+| `MOTO_HOST` | `localhost` | Hostname of the moto server (local development only) |
+| `MOTO_PORT` | `5000` | Port of the moto server (local development only) |
 | `AWS_REGION` | `eu-central-1` | AWS region |
 | `AWS_CONNECT_TIMEOUT` | `5` | Timeout in seconds for establishing a connection to AWS services |
 | `AWS_READ_TIMEOUT` | `30` | Timeout in seconds for reading a response from AWS services |
