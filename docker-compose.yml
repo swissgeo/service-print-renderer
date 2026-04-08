@@ -81,7 +81,6 @@ services:
       - AWS_REGION=${AWS_REGION}
     networks:
       - network_local
-
   renderer-info:
     profiles: [renderer-info]
     build:
@@ -101,5 +100,5 @@ services:
 
 networks:
   network_local:
-    driver: bridge
+    external: true
     name: shared_network_local
