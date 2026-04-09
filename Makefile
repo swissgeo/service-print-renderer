@@ -139,7 +139,9 @@ lint: ## Run the linter on the code base and type-checker ty
 .PHONY: start-moto
 start-moto: ## Run moto server locally and initialize resources (DynamoDB, SQS, S3)
 	docker network create shared_network_local 2>/dev/null || true
+	# reuse existing container if present, otherwise create it via compose
 	docker inspect moto-server >/dev/null 2>&1 && docker start moto-server || docker compose --env-file=${ENV_FILE} up -d moto-server
+	# run one-shot init containers to create DynamoDB table, SQS queues and S3 bucket
 	docker compose --env-file=${ENV_FILE} up --remove-orphans init-dynamo init-sqs init-s3
 
 .PHONY: stop-moto
