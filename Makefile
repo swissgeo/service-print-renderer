@@ -142,6 +142,10 @@ start-moto: ## Run moto server locally and initialize resources (DynamoDB, SQS, 
 	docker inspect moto-server >/dev/null 2>&1 && docker start moto-server || docker compose --env-file=${ENV_FILE} up -d moto-server
 	docker compose --env-file=${ENV_FILE} up --remove-orphans init-dynamo init-sqs init-s3
 
+.PHONY: stop-moto
+stop-moto: ## Stop the moto server container
+	docker stop moto-server 2>/dev/null || true
+
 
 .PHONY: test-ci
 test-ci: $(LOGS_DIR) ## Run tests in the CI
