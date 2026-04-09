@@ -18,7 +18,7 @@ from app.config.settings import (
     AWS_LOCAL,
     AWS_READ_TIMEOUT,
     AWS_REGION,
-    LOCALSTACK_ENDPOINT,
+    MOTO_ENDPOINT,
     S3_BUCKET_NAME,
     S3_PDF_CACHE_CONTROL_MAX_AGE,
     S3_PDF_PREFIX,
@@ -45,7 +45,7 @@ def get_s3_client() -> S3Client:
             )
             return boto3.client(
                 "s3",
-                endpoint_url=LOCALSTACK_ENDPOINT,
+                endpoint_url=MOTO_ENDPOINT,
                 region_name=AWS_REGION,
                 config=local_config,
             )
@@ -91,6 +91,6 @@ def upload_pdf(job_id: str, pdf_path: Path) -> str:
         logger.exception("Error uploading PDF for job %s to S3", job_id)
         raise
 
-    pdf_url = f"{LOCALSTACK_ENDPOINT}/{S3_BUCKET_NAME}/{key}" if AWS_LOCAL else f"/{key}"
+    pdf_url = f"{MOTO_ENDPOINT}/{S3_BUCKET_NAME}/{key}" if AWS_LOCAL else f"/{key}"
     logger.debug("PDF URL for job %s: %s", job_id, pdf_url)
     return pdf_url

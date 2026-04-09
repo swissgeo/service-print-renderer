@@ -13,7 +13,7 @@
 - [Setup and Run](#setup-and-run)
   - [Prerequisites](#prerequisites)
   - [Setup](#setup)
-  - [Start LocalStack](#start-localstack)
+  - [Start Moto](#start-moto)
   - [Run](#run)
   - [Test](#test)
 - [Deployment configuration](#deployment-configuration)
@@ -57,29 +57,31 @@ make setup
 
 `make setup` creates the virtual environment, installs all dependencies.
 
-### Start LocalStack
+### Start Moto
 
 Start the local AWS stack (DynamoDB, SQS, S3) and create the required resources:
 
 > [!NOTE]
-> Maybe you want to start the local stack from the project `service-print-api` it is starting exactly the same local stack as in this project. Doing so, you have the possibility to test the entire print procedure.
+> Maybe you want to start the local stack from the project `service-print-api` — it starts exactly the same stack as in this project. Doing so, you have the possibility to test the entire print procedure.
 
 ```bash
-make start-localstack
+make start-moto
 ```
 
-This runs `docker compose up -d` which starts LocalStack and the following init containers:
+This starts a [moto server](https://docs.getmoto.org/en/latest/docs/server_mode.html) container and runs the following init containers:
 
 | Container | Action |
 | --------- | ------ |
 | `init-dynamo` | Creates the DynamoDB table (`DYNAMODB_TABLE_NAME`) |
 | `init-sqs` | Creates the DLQ (`SQS_DL_QUEUE_NAME`) and the main SQS queue (`SQS_QUEUE_NAME`) with a redrive policy pointing to the DLQ |
-| `init-s3` | Creates the S3 bucket (`S3_BUCKET_NAME`) |
+| `init-s3` | Creates the S3 bucket (`S3_BUCKET_NAME`) with a public-read policy |
+
+If a moto server is already running (e.g. started from `service-print-api`), `make start-moto` reuses it and only reruns the init containers.
 
 To verify the S3 bucket was created:
 
 ```bash
-aws s3 ls --endpoint-url http://localhost:4566
+AWS_ACCESS_KEY_ID=123 AWS_SECRET_ACCESS_KEY=123 aws s3 ls --endpoint-url http://localhost:5000
 ```
 
 ### Run
@@ -105,8 +107,9 @@ The service is configured entirely via environment variables:
 
 | Env | Default | Description |
 | --- | ------- | ----------- |
-| `AWS_LOCAL` | `false` | Set to `true` to point AWS clients at LocalStack instead of real AWS |
-| `LOCALSTACK_ENDPOINT` | `http://localhost:4566` | Endpoint URL of the LocalStack instance (local development only) |
+| `AWS_LOCAL` | `false` | Set to `true` to point AWS clients at the moto server instead of real AWS |
+| `MOTO_HOST` | `localhost` | Hostname of the moto server (local development only) |
+| `MOTO_PORT` | `5000` | Port of the moto server (local development only) |
 | `AWS_REGION` | `eu-central-1` | AWS region |
 | `AWS_CONNECT_TIMEOUT` | `5` | Timeout in seconds for establishing a connection to AWS services |
 | `AWS_READ_TIMEOUT` | `30` | Timeout in seconds for reading a response from AWS services |
