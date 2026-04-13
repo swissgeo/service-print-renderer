@@ -64,25 +64,18 @@ def setup_trace_provider() -> None:
 
     Controlled by env vars:
     - OTEL_SDK_DISABLED: disables all instrumentation when true
-    - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP collector endpoint (default: http://localhost:4317)
+    - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP collector endpoint (default: http://localhost:4318)
     - OTEL_EXPORTER_OTLP_HEADERS: optional headers for the exporter
-    - OTEL_EXPORTER_OTLP_INSECURE: use insecure (plaintext) connection when true
     """
     if not strtobool(getenv("OTEL_SDK_DISABLED", "false")):
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
             OTLPSpanExporter,
         )
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        span_processor = BatchSpanProcessor(
-            OTLPSpanExporter(
-                endpoint=getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
-                headers=getenv("OTEL_EXPORTER_OTLP_HEADERS"),
-                insecure=strtobool(getenv("OTEL_EXPORTER_OTLP_INSECURE", "false")),
-            )
-        )
+        span_processor = BatchSpanProcessor(OTLPSpanExporter())
         provider = TracerProvider(resource=Resource.create())
         provider.add_span_processor(span_processor)
         trace.set_tracer_provider(provider)

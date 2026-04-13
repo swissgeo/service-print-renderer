@@ -172,8 +172,7 @@ test $(( $(date +%s) - $(date +%s -r /tmp/liveness_probe) )) -lt 60 && echo "ali
 | `OTEL_SDK_DISABLED` | `false` | Set to `true` to disable all OTEL instrumentation |
 | `OTEL_ENABLE_LOGGING` | `false` | Set to `true` to inject `otelTraceID` and `otelSpanID` into log records |
 | `OTEL_ENABLE_BOTOCORE` | `false` | Set to `true` to enable tracing of DynamoDB, SQS, and S3 calls |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP gRPC endpoint of the collector |
-| `OTEL_EXPORTER_OTLP_INSECURE` | `false` | Set to `true` to use an insecure (non-TLS) connection to the collector |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP HTTP endpoint of the collector |
 | `OTEL_EXPORTER_OTLP_HEADERS` | — | Optional headers for the OTLP collector (e.g. for authentication) |
 | `OTEL_RESOURCE_ATTRIBUTES` | — | Resource attributes attached to all spans (e.g. `service.name=service-print-renderer`) |
 
