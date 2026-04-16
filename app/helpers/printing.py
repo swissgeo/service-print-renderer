@@ -178,6 +178,24 @@ class ChromeBrowserManager:
             with _timed("build_url"):
                 url = self._build_url(payload)
 
+            page.add_init_script("""
+                window.__GA_MAP_READY__ = false;
+                window.addEventListener("message", event => {
+                    if (event.data?.type === "gaMapReady") {
+                        window.__GA_MAP_READY__ = true;
+                    }
+                });
+                // TODO: the gaMapReady should be fired by the frontend after rendercomplete
+                const __gaMapInterval = setInterval(() => {
+                    if (window.map) {
+                        clearInterval(__gaMapInterval);
+                        window.map.once("rendercomplete", () => {
+                            window.__GA_MAP_READY__ = true;
+                        });
+                    }
+                }, 50);
+            """)
+
             logger.info("Navigating to %s", url)
             with _timed("navigate_to_url"):
                 response: Response | None = None
@@ -198,25 +216,13 @@ class ChromeBrowserManager:
                         else:
                             raise
                 # goto() does not raise on HTTP error statuses, and gaMapReady never
-                # fires when the portal errors — fail fast instead of waiting for the
+                # fires when the portal errors - fail fast instead of waiting for the
                 # gaMapReady timeout below.
                 if response is not None and not response.ok:
                     raise RenderingError(f"web-portal returned HTTP {response.status} for {url}")
-                page.evaluate(
-                    """
-                    (timeoutMs) => new Promise((resolve, reject) => {
-                        const timer = setTimeout(
-                            () => reject(new Error('gaMapReady timeout')), timeoutMs
-                        );
-                        window.addEventListener("message", event => {
-                            if (event.data.type === 'gaMapReady') {
-                                clearTimeout(timer);
-                                resolve(event.data);
-                            }
-                        });
-                    })
-                    """,
-                    TIMEOUT_LOADING_WEB_PAGE,
+                page.wait_for_function(
+                    "() => window.__GA_MAP_READY__ === true",
+                    timeout=TIMEOUT_LOADING_WEB_PAGE,
                 )
             logger.info("Page loaded")
 
