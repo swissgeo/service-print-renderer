@@ -65,6 +65,8 @@ BROWSER_NAVIGATION_RETRIES: int = int(os.environ.get("BROWSER_NAVIGATION_RETRIES
 # Chrome launch flags for headless rendering.
 # USE_GPU=true switches to ANGLE over Vulkan (uses system GPU via nvidia_icd / mesa).
 # Default (false) uses ANGLE over SwiftShader for CI/containers (no GPU required).
+# See https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md for
+# more details on flags.
 _USE_GPU: bool = os.environ.get("USE_GPU", "false").lower() == "true"
 BROWSER_LAUNCH_ARGS: list[str] = [
     *(
@@ -77,6 +79,25 @@ BROWSER_LAUNCH_ARGS: list[str] = [
     "--enable-webgl",
     "--no-sandbox",  # covers GPU sandbox too; --disable-gpu-sandbox is redundant
     "--disable-dev-shm-usage",  # prevents Chrome from crashing on limited /dev/shm in Docker
+    # Disable various background network services, including extension updating, safe browsing
+    # service, upgrade detector, translate, UMA.
+    "--disable-background-networking",
+    # Don't update the browser 'components' listed at chrome://components/
+    "--disable-component-update",
+    # Disables Domain Reliability Monitoring, which tracks whether the browser has difficulty
+    # contacting Google-owned sites and uploads reports to Google
+    "--disable-domain-reliability",
+    # Disable syncing to a Google account
+    "--disable-sync",
+    # Disable reporting to UMA, but allows for collection
+    "--metrics-recording-only",
+    "--disable-features=AutofillServerCommunication",
+    "--disable-features=MediaRouter",
+    # Disable quick mode to avoid UDP background activity,
+    # When quick mode is enable, chrome open UDP sockets to its own QUIC server
+    # So we disable it to avoid background noise activity
+    # See https://en.wikipedia.org/wiki/QUIC
+    "--disable-quic",
 ]
 
 # Paper sizes at 96 dpi (width, height) in pixels — portrait orientation
