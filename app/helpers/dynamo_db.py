@@ -88,7 +88,7 @@ def update_job_status(job_id: str, status: str, **extra_fields: Any) -> None:
         status: The new status value (e.g. "started", "completed", "error").
         **extra_fields: Additional attributes to set on the item
                         (e.g. started_timestamp_iso_8601, finished_timestamp_iso_8601,
-                        pdf_url, message).
+                        message).
     """
     dynamodb_table = get_dynamodb_table()
 

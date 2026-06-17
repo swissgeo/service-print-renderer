@@ -47,15 +47,12 @@ S3_BUCKET_NAME: str = os.environ.get("S3_BUCKET_NAME", "service-print-pdf-local"
 S3_PDF_PREFIX: str = os.environ.get("S3_PDF_PREFIX", "api/wps/v1/print/pdf")
 S3_PDF_CACHE_CONTROL_MAX_AGE: int = int(os.environ.get("S3_PDF_CACHE_CONTROL_MAX_AGE", "3600"))
 
-# Webmapviewer endpoints
-VIEWER_URL_MAP_RASTER: str = os.environ.get("VIEWER_URL_MAP_RASTER", "")
-VIEWER_URL_MAP: str = os.environ.get("VIEWER_URL_MAP", "")
-VIEWER_URL_LEGEND: str = os.environ.get("VIEWER_URL_LEGEND", "")
+# Webmapviewer endpoint. The renderer builds the per-job URL as
+# "<VIEWER_URL without trailing /?>/<print_lang>/print?<query>".
+VIEWER_URL: str = os.environ.get("VIEWER_URL", "")
 
 # Rendering behaviour
 TIMEOUT_LOADING_WEB_PAGE: int = int(os.environ.get("TIMEOUT_LOADING_WEB_PAGE", "30000"))
-ROUND_UP_TO_NEXT_Z_INT: bool = os.environ.get("ROUND_UP_TO_NEXT_Z_INT", "true").lower() == "true"
-GO_ONE_Z_FURTHER: bool = os.environ.get("GO_ONE_Z_FURTHER", "false").lower() == "true"
 # Recycle (restart) Chrome after this many jobs to prevent memory accumulation.
 # 0 disables recycling.
 BROWSER_RECYCLE_AFTER_JOBS: int = int(os.environ.get("BROWSER_RECYCLE_AFTER_JOBS", "10"))
@@ -78,33 +75,3 @@ BROWSER_LAUNCH_ARGS: list[str] = [
     "--no-sandbox",  # covers GPU sandbox too; --disable-gpu-sandbox is redundant
     "--disable-dev-shm-usage",  # prevents Chrome from crashing on limited /dev/shm in Docker
 ]
-
-# Paper sizes at 96 dpi (width, height) in pixels — portrait orientation
-PAPER_SIZES: dict[str, tuple[int, int]] = {
-    "a0": (3179, 4494),
-    "a1": (2245, 3179),
-    "a2": (1587, 2245),
-    "a3": (1123, 1587),
-    "a4": (794, 1123),
-    "a5": (559, 794),
-    "a6": (397, 559),
-}
-
-# WMTS scale denominator → zoom level matrix for LV95
-# https://api3.geo.admin.ch/services/sdiservices.html#wmts
-MATRIX_LV95: dict[int, int] = {
-    0: 2456694,
-    1: 1889765,
-    2: 944882,
-    3: 377953,
-    4: 188976,
-    5: 75591,
-    6: 37795,
-    7: 18898,
-    8: 9449,
-    9: 7559,
-    10: 3780,
-    11: 1890,
-    12: 945,
-    13: 378,
-}

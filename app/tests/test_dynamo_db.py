@@ -73,13 +73,13 @@ def test_update_job_status_done(mock_table):
         "4a80ad23a0d62b4102",
         "done",
         finished_timestamp_iso_8601="2024-01-01T00:05:00+00:00",
-        pdf_url="s3://bucket/4a80ad23a0d62b4102.pdf",
+        message="Print completed",
     )
 
     mock_table.update_item.assert_called_once()
     call_kwargs = mock_table.update_item.call_args[1]
     assert call_kwargs["ExpressionAttributeValues"][":val_status"] == "done"
-    assert ":val_pdf_url" in call_kwargs["ExpressionAttributeValues"]
+    assert ":val_message" in call_kwargs["ExpressionAttributeValues"]
 
 
 def test_update_job_status_uses_correct_key(mock_table):
@@ -102,14 +102,14 @@ def test_update_job_status_update_expression_contains_all_fields(mock_table):
         "job-1",
         "finished",
         finished_timestamp_iso_8601="2024-01-01T00:05:00+00:00",
-        pdf_url="https://example.com/4a80ad23a0d62b4102.pdf",
+        message="Print completed",
     )
 
     expr = mock_table.update_item.call_args[1]["UpdateExpression"]
     assert "SET" in expr
     assert "#attr_status" in expr
     assert "#attr_finished_timestamp_iso_8601" in expr
-    assert "#attr_pdf_url" in expr
+    assert "#attr_message" in expr
 
 
 def test_update_job_status_all_extra_values_present(mock_table):
