@@ -19,16 +19,16 @@ if TYPE_CHECKING:
 from app.config.settings import (
     BROWSER_LAUNCH_ARGS,
     BROWSER_NAVIGATION_RETRIES,
+    PORTAL_URL,
     TIMEOUT_LOADING_WEB_PAGE,
-    VIEWER_URL,
 )
 
 logger = logging.getLogger(__name__)
 
 _CHROME_EXECUTABLE = "/usr/bin/google-chrome"
 
-# TODO: remove once the print viewer derives the zoom from print_scale itself.
-# The viewer currently fails to render without a z= query param, so we send a
+# TODO: remove once the web-portal derives the zoom from print_scale itself.
+# The web-portal currently fails to render without a z= query param, so we send a
 # fixed placeholder zoom as a temporary shim.
 _TEMPORARY_Z = 8
 
@@ -45,9 +45,9 @@ def _timed(label: str) -> Generator:
 
 
 def _format_query_value(value: object) -> str:
-    """Render a payload value for use in the viewer query string.
+    """Render a payload value for use in the web-portal query string.
 
-    Booleans are lowercased to ``true``/``false`` so the web viewer receives
+    Booleans are lowercased to ``true``/``false`` so the web-portal receives
     JS-style flags rather than Python's capitalised ``True``/``False``.
     """
     if isinstance(value, bool):
@@ -93,26 +93,26 @@ class ChromeBrowserManager:
     # ------------------------------------------------------------------
 
     def _build_url(self, payload: dict) -> str:
-        """Construct the full webmapviewer URL for the current job.
+        """Construct the full web-portal URL for the current job.
 
         The URL has the shape ``<base>/<print_lang>/print?<query>`` where the
         query carries the ``state`` id and every ``print_*`` payload key
         (except ``print_lang``, which is part of the path). ``print_lang`` is
         optional — when it is missing or empty the language segment is dropped
         and the path is just ``<base>/print``. All values are forwarded to the
-        viewer verbatim — no zoom/resolution math happens here. A fixed
+        web-portal verbatim — no zoom/resolution math happens here. A fixed
         placeholder ``z`` is also sent as a temporary shim; see ``_TEMPORARY_Z``.
         """
-        if not VIEWER_URL:
-            raise ValueError("VIEWER_URL is not configured — set it in your environment")
+        if not PORTAL_URL:
+            raise ValueError("PORTAL_URL is not configured — set it in your environment")
 
-        base = VIEWER_URL.rstrip("?/")
+        base = PORTAL_URL.rstrip("?/")
         lang = str(payload.get("print_lang") or "")
         path = f"{base}/{lang}/print" if lang else f"{base}/print"
 
         query_items: list[tuple[str, str]] = [
             ("state", str(payload["state_id"])),
-            # TODO: remove _TEMPORARY_Z once the viewer reads zoom from print_scale.
+            # TODO: remove _TEMPORARY_Z once the web-portal reads zoom from print_scale.
             ("z", str(_TEMPORARY_Z)),
         ]
         query_items += [
@@ -132,7 +132,7 @@ class ChromeBrowserManager:
 
         A fresh ``BrowserContext`` is created for each job and closed when
         done, so successive jobs do not share any browser state. The browser
-        runs at a device pixel ratio of 1; the viewer is responsible for all
+        runs at a device pixel ratio of 1; the web-portal is responsible for all
         layout, zoom and resolution.
 
         Args:

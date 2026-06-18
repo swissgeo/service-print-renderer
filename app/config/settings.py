@@ -47,9 +47,9 @@ S3_BUCKET_NAME: str = os.environ.get("S3_BUCKET_NAME", "service-print-pdf-local"
 S3_PDF_PREFIX: str = os.environ.get("S3_PDF_PREFIX", "api/wps/v1/print/pdf")
 S3_PDF_CACHE_CONTROL_MAX_AGE: int = int(os.environ.get("S3_PDF_CACHE_CONTROL_MAX_AGE", "3600"))
 
-# Webmapviewer endpoint. The renderer builds the per-job URL as
-# "<VIEWER_URL without trailing /?>/<print_lang>/print?<query>".
-VIEWER_URL: str = os.environ.get("VIEWER_URL", "")
+# web-portal endpoint. The renderer builds the per-job URL as
+# "<PORTAL_URL without trailing /?>/<print_lang>/print?<query>".
+PORTAL_URL: str = os.environ.get("PORTAL_URL", "")
 
 # Rendering behaviour
 TIMEOUT_LOADING_WEB_PAGE: int = int(os.environ.get("TIMEOUT_LOADING_WEB_PAGE", "30000"))

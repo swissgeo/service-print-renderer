@@ -35,7 +35,7 @@ def test_enter_launches_browser():
 
 
 def test_build_url_path_includes_lang_and_print(monkeypatch):
-    monkeypatch.setattr("app.helpers.printing.VIEWER_URL", "https://www.dev.sgdi.tech/?")
+    monkeypatch.setattr("app.helpers.printing.PORTAL_URL", "https://www.dev.sgdi.tech/?")
     url = ChromeBrowserManager()._build_url(_PAYLOAD)
     parsed = urlparse(url)
     assert parsed.scheme == "https"
@@ -44,19 +44,19 @@ def test_build_url_path_includes_lang_and_print(monkeypatch):
 
 
 def test_build_url_drops_lang_segment_when_absent(monkeypatch):
-    monkeypatch.setattr("app.helpers.printing.VIEWER_URL", "https://www.dev.sgdi.tech/?")
+    monkeypatch.setattr("app.helpers.printing.PORTAL_URL", "https://www.dev.sgdi.tech/?")
     payload = {k: v for k, v in _PAYLOAD.items() if k != "print_lang"}
     assert urlparse(ChromeBrowserManager()._build_url(payload)).path == "/print"
 
 
 def test_build_url_drops_lang_segment_when_empty(monkeypatch):
-    monkeypatch.setattr("app.helpers.printing.VIEWER_URL", "https://www.dev.sgdi.tech/?")
+    monkeypatch.setattr("app.helpers.printing.PORTAL_URL", "https://www.dev.sgdi.tech/?")
     url = ChromeBrowserManager()._build_url({**_PAYLOAD, "print_lang": ""})
     assert urlparse(url).path == "/print"
 
 
 def test_build_url_carries_state_and_print_params(monkeypatch):
-    monkeypatch.setattr("app.helpers.printing.VIEWER_URL", "https://www.dev.sgdi.tech/?")
+    monkeypatch.setattr("app.helpers.printing.PORTAL_URL", "https://www.dev.sgdi.tech/?")
     qs = parse_qs(urlparse(ChromeBrowserManager()._build_url(_PAYLOAD)).query)
     assert qs["state"] == ["mipNBAzN1lvPUl9V"]
     assert qs["print_format"] == ["a4"]
@@ -66,34 +66,34 @@ def test_build_url_carries_state_and_print_params(monkeypatch):
 
 
 def test_build_url_sends_temporary_fixed_z(monkeypatch):
-    # TODO: remove with _TEMPORARY_Z once the viewer derives zoom from print_scale.
-    monkeypatch.setattr("app.helpers.printing.VIEWER_URL", "https://www.dev.sgdi.tech/?")
+    # TODO: remove with _TEMPORARY_Z once the web-portal derives zoom from print_scale.
+    monkeypatch.setattr("app.helpers.printing.PORTAL_URL", "https://www.dev.sgdi.tech/?")
     qs = parse_qs(urlparse(ChromeBrowserManager()._build_url(_PAYLOAD)).query)
     assert qs["z"] == [str(_TEMPORARY_Z)]
 
 
 def test_build_url_state_id_renamed_to_state(monkeypatch):
-    monkeypatch.setattr("app.helpers.printing.VIEWER_URL", "https://www.dev.sgdi.tech/?")
+    monkeypatch.setattr("app.helpers.printing.PORTAL_URL", "https://www.dev.sgdi.tech/?")
     qs = parse_qs(urlparse(ChromeBrowserManager()._build_url(_PAYLOAD)).query)
     assert "state_id" not in qs
 
 
 def test_build_url_booleans_lowercased(monkeypatch):
-    monkeypatch.setattr("app.helpers.printing.VIEWER_URL", "https://www.dev.sgdi.tech/?")
+    monkeypatch.setattr("app.helpers.printing.PORTAL_URL", "https://www.dev.sgdi.tech/?")
     qs = parse_qs(urlparse(ChromeBrowserManager()._build_url(_PAYLOAD)).query)
     assert qs["print_legend"] == ["true"]
     assert qs["print_grid"] == ["false"]
 
 
 def test_build_url_excludes_print_lang_from_query(monkeypatch):
-    monkeypatch.setattr("app.helpers.printing.VIEWER_URL", "https://www.dev.sgdi.tech/?")
+    monkeypatch.setattr("app.helpers.printing.PORTAL_URL", "https://www.dev.sgdi.tech/?")
     qs = parse_qs(urlparse(ChromeBrowserManager()._build_url(_PAYLOAD)).query)
     assert "print_lang" not in qs
 
 
-def test_build_url_raises_missing_viewer_url(monkeypatch):
-    monkeypatch.setattr("app.helpers.printing.VIEWER_URL", "")
-    with pytest.raises(ValueError, match="VIEWER_URL"):
+def test_build_url_raises_missing_portal_url(monkeypatch):
+    monkeypatch.setattr("app.helpers.printing.PORTAL_URL", "")
+    with pytest.raises(ValueError, match="PORTAL_URL"):
         ChromeBrowserManager()._build_url(_PAYLOAD)
 
 
