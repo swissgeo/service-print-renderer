@@ -43,18 +43,6 @@ def test_build_url_path_includes_lang_and_print(monkeypatch):
     assert parsed.path == "/de/print"
 
 
-def test_build_url_drops_lang_segment_when_absent(monkeypatch):
-    monkeypatch.setattr("app.helpers.printing.PORTAL_URL", "https://www.dev.sgdi.tech/?")
-    payload = {k: v for k, v in _PAYLOAD.items() if k != "print_lang"}
-    assert urlparse(ChromeBrowserManager()._build_url(payload)).path == "/print"
-
-
-def test_build_url_drops_lang_segment_when_empty(monkeypatch):
-    monkeypatch.setattr("app.helpers.printing.PORTAL_URL", "https://www.dev.sgdi.tech/?")
-    url = ChromeBrowserManager()._build_url({**_PAYLOAD, "print_lang": ""})
-    assert urlparse(url).path == "/print"
-
-
 def test_build_url_carries_state_and_print_params(monkeypatch):
     monkeypatch.setattr("app.helpers.printing.PORTAL_URL", "https://www.dev.sgdi.tech/?")
     qs = parse_qs(urlparse(ChromeBrowserManager()._build_url(_PAYLOAD)).query)

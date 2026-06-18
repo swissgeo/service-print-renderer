@@ -97,18 +97,16 @@ class ChromeBrowserManager:
 
         The URL has the shape ``<base>/<print_lang>/print?<query>`` where the
         query carries the ``state`` id and every ``print_*`` payload key
-        (except ``print_lang``, which is part of the path). ``print_lang`` is
-        optional — when it is missing or empty the language segment is dropped
-        and the path is just ``<base>/print``. All values are forwarded to the
-        web-portal verbatim — no zoom/resolution math happens here. A fixed
-        placeholder ``z`` is also sent as a temporary shim; see ``_TEMPORARY_Z``.
+        (except ``print_lang``, which is part of the path). All values are
+        forwarded to the web-portal verbatim — no zoom/resolution math happens
+        here. A fixed placeholder ``z`` is also sent as a temporary shim; see
+        ``_TEMPORARY_Z``.
         """
         if not PORTAL_URL:
             raise ValueError("PORTAL_URL is not configured — set it in your environment")
 
         base = PORTAL_URL.rstrip("?/")
-        lang = str(payload.get("print_lang") or "")
-        path = f"{base}/{lang}/print" if lang else f"{base}/print"
+        path = f"{base}/{payload['print_lang']}/print"
 
         query_items: list[tuple[str, str]] = [
             ("state", str(payload["state_id"])),
