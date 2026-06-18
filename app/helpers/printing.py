@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 _CHROME_EXECUTABLE = "/usr/bin/google-chrome"
 
-# TODO: remove once the web-portal derives the zoom from print_scale itself.
+# TODO: remove once the web-portal does not take this value as a mandatory parameter.
 # The web-portal currently fails to render without a z= query param, so we send a
 # fixed placeholder zoom as a temporary shim.
 _TEMPORARY_Z = 8
