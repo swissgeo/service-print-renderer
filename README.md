@@ -18,8 +18,9 @@
   - [Test](#test)
 - [Deployment configuration](#deployment-configuration)
   - [Kubernetes probes](#kubernetes-probes)
-  - [OpenTelemetry (tracing)](#opentelemetry-tracing)
-    - [Local tracing setup](#local-tracing-setup)
+  - [Observability](#observability)
+    - [Logging implementation](#logging-implementation)
+    - [Local OTEL testing](#local-otel-testing)
 - [Debugging](#debugging)
   - [WebGL renderer info](#webgl-renderer-info)
 
@@ -33,11 +34,11 @@ Malformed SQS messages (unparseable body or missing `job_id`) are deleted direct
 
 ## Technologies
 
-- [AWS SQS](https://aws.amazon.com/sqs/) — job queue
-- [AWS DynamoDB](https://aws.amazon.com/dynamodb/) — job status tracking
-- [AWS S3](https://aws.amazon.com/s3/) — PDF storage
-- [Playwright (Python)](https://playwright.dev/python/docs/intro) — browser automation
-- [Chrome headless](https://developer.chrome.com/docs/chromium/headless) — PDF rendering
+- [AWS SQS](https://aws.amazon.com/sqs/) - job queue
+- [AWS DynamoDB](https://aws.amazon.com/dynamodb/) - job status tracking
+- [AWS S3](https://aws.amazon.com/s3/) - PDF storage
+- [Playwright (Python)](https://playwright.dev/python/docs/intro) - browser automation
+- [Chrome headless](https://developer.chrome.com/docs/chromium/headless) - PDF rendering
 
 ## Setup and Run
 
@@ -62,7 +63,7 @@ make setup
 Start the local AWS stack (DynamoDB, SQS, S3) and create the required resources:
 
 > [!NOTE]
-> Maybe you want to start the local stack from the project `service-print-api` — it starts exactly the same stack as in this project. Doing so, you have the possibility to test the entire print procedure.
+> Maybe you want to start the local stack from the project `service-print-api`. It starts exactly the same stack as in this project. Doing so, you have the possibility to test the entire print procedure.
 
 ```bash
 make start-moto
@@ -123,9 +124,9 @@ The service is configured entirely via environment variables:
 | `SQS_MAX_MESSAGES` | `1` | Maximum number of messages to retrieve per SQS poll |
 | `S3_BUCKET_NAME` | `service-print-jobs-local` | S3 bucket where rendered PDFs are stored |
 | `S3_PDF_CACHE_CONTROL_MAX_AGE` | `3600` | TTL in seconds for the `Cache-Control: max-age` header set on PDFs uploaded to S3; controls how long CloudFront and browsers cache the PDF |
-| `PORTAL_URL` | — | web-portal endpoint (**required**). The per-job URL is built as `<PORTAL_URL without trailing /?>/<print_lang>/print?<query>`, e.g. `https://www.dev.sgdi.tech/en/print?state=…&z=4&print_format=a3&…` |
+| `PORTAL_URL` | - | web-portal endpoint (**required**). The per-job URL is built as `<PORTAL_URL without trailing /?>/<print_lang>/print?<query>`, e.g. `https://www.dev.sgdi.tech/en/print?state=…&z=4&print_format=a3&…` |
 | `TIMEOUT_LOADING_WEB_PAGE` | `30000` | Browser page-load timeout in milliseconds |
-| `USE_GPU` | `false` | Set to `true` to use the local machine's GPU (native OpenGL) instead of the SwiftShader software rasterizer — for local development only |
+| `USE_GPU` | `false` | Set to `true` to use the local machine's GPU (native OpenGL) instead of the SwiftShader software rasterizer. For local development only |
 | `BROWSER_RECYCLE_AFTER_JOBS` | `10` | Restart Chrome after this many jobs to prevent memory accumulation; set to `0` to disable |
 | `BROWSER_NAVIGATION_RETRIES` | `3` | Number of times to retry page navigation on `ERR_NETWORK_CHANGED` before failing the job |
 
@@ -154,34 +155,53 @@ The liveness check passes only if the file was touched within the last 60 second
 You can verify the probe files manually while the worker is running:
 
 ```bash
-# startup probe — exists once the worker loop has started
+# startup probe: exists once the worker loop has started
 test -f /tmp/startup_probe && echo "started" || echo "not started"
 
-# liveness probe — touched every polling cycle, must be < 60s old
+# liveness probe: touched every polling cycle, must be < 60s old
 test $(( $(date +%s) - $(date +%s -r /tmp/liveness_probe) )) -lt 60 && echo "alive" || echo "not alive"
 ```
 
-### OpenTelemetry (tracing)
+### Observability
+
+The worker exports **traces** via OpenTelemetry (OTLP) by default, and can also export
+**logs** via OTLP when the OTEL logging config is used (see
+[Logging implementation](#logging-implementation)); metrics are not implemented yet. With
+`OTEL_ENABLE_BOTOCORE=true`, every DynamoDB, SQS, and S3 call is also captured as a span.
 
 | Env | Default | Description |
 | --- | ------- | ----------- |
 | `OTEL_SDK_DISABLED` | `false` | Set to `true` to disable all OTEL instrumentation |
-| `OTEL_ENABLE_LOGGING` | `false` | Set to `true` to inject `otelTraceID` and `otelSpanID` into log records |
-| `OTEL_ENABLE_BOTOCORE` | `false` | Set to `true` to enable tracing of DynamoDB, SQS, and S3 calls |
+| `OTEL_ENABLE_BOTOCORE` | `false` | Set to `true` to trace DynamoDB, SQS, and S3 calls |
+| `OTEL_ENABLE_OTLP_EXPORTER` | `true` | Export spans/logs to the OTLP collector; set `false` to print spans to the console instead (no collector required) |
+| `OTEL_ENABLE_LOGGING` | `false` | Enables the deprecated `LoggingInstrumentor`. Left off, see [Logging implementation](#logging-implementation) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP gRPC endpoint of the collector |
-| `OTEL_EXPORTER_OTLP_INSECURE` | `false` | Set to `true` to use an insecure (non-TLS) connection to the collector |
-| `OTEL_EXPORTER_OTLP_HEADERS` | — | Optional headers for the OTLP collector (e.g. for authentication) |
-| `OTEL_RESOURCE_ATTRIBUTES` | — | Resource attributes attached to all spans (e.g. `service.name=service-print-renderer`) |
+| `OTEL_EXPORTER_OTLP_INSECURE` | `false` | Set to `true` for an insecure (non-TLS) connection. Required for a plaintext local collector |
+| `OTEL_EXPORTER_OTLP_HEADERS` | - | Optional headers for the OTLP collector (e.g. for authentication) |
+| `OTEL_RESOURCE_ATTRIBUTES` | - | Resource attributes attached to all telemetry (e.g. `service.name=service-print-renderer`) |
 
-#### Local tracing setup
+#### Logging implementation
 
-To test tracing locally, start the OTEL collector and Zipkin:
+When the OTEL logging config (`app/config/logging-cfg-otel.yaml`) is used, logs are exported
+through the OpenTelemetry `LoggerProvider` (the `otel` handler).
 
-```bash
-docker compose -f docker-compose-otel.yml up -d
-```
+#### Local OTEL testing
 
-Then start the app with `make run`. Traces are visible at **<http://localhost:9411>** (Zipkin UI).
+1. Start the local OTEL collector and Jaeger:
+
+   ```bash
+   make start-otel
+   ```
+
+2. Run the worker. Traces export by default; to also export logs via OTLP, point
+   `LOGGING_CFG` at the OTEL logging config:
+
+   ```bash
+   LOGGING_CFG=app/config/logging-cfg-otel.yaml make run
+   ```
+
+View the full traces in the Jaeger UI at **<http://localhost:16686>**. Stop the stack with
+`make stop-otel`.
 
 ## Debugging
 
