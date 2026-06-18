@@ -28,7 +28,7 @@ def test_upload_pdf_returns_s3_url(tmp_path):
 
 
 @pytest.mark.usefixtures("mock_s3_client")
-def test_upload_pdf_returns_localstack_url(tmp_path):
+def test_upload_pdf_returns_moto_url(tmp_path):
     pdf = tmp_path / "test.pdf"
     pdf.write_bytes(b"%PDF-1.4 fake content")
 
