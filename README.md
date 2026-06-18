@@ -117,7 +117,7 @@ The service is configured entirely via environment variables:
 | `SQS_QUEUE_NAME` | `service-print-jobs-queue-local` | SQS queue name |
 | `SQS_DL_QUEUE_NAME` | `service-print-jobs-dlq-local` | SQS dead-letter queue name |
 | `SQS_MAX_RECEIVE_COUNT` | `3` | Number of times a message can be received before SQS routes it to the DLQ automatically |
-| `SQS_VISIBILITY_TIMEOUT` | `60` | How long (in seconds) a received message is hidden from other consumers; after expiry SQS redelivers it (or routes to DLQ if `maxReceiveCount` is reached) |
+| `SQS_VISIBILITY_TIMEOUT` | `90` | How long (in seconds) a received message is hidden from other consumers; after expiry SQS redelivers it (or routes to DLQ if `maxReceiveCount` is reached). Must exceed the worst-case render time so a slow job is not redelivered while still processing |
 | `SQS_WAIT_TIME_SECONDS` | `20` | Long-polling wait time in seconds when reading from SQS |
 | `SQS_DLQ_WAIT_TIME_SECONDS` | `2` | Polling wait time in seconds when reading from SQS DLQ |
 | `SQS_MAX_MESSAGES` | `1` | Maximum number of messages to retrieve per SQS poll |

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from types import TracebackType
     from typing import Self
 
-    from playwright.sync_api import Browser, BrowserContext, Page, Playwright
+    from playwright.sync_api import Browser, BrowserContext, Page, Playwright, Response
 
 from app.config.settings import (
     BROWSER_LAUNCH_ARGS,
@@ -164,9 +164,10 @@ class ChromeBrowserManager:
 
             logger.info("Navigating to %s", url)
             with _timed("navigate_to_url"):
+                response: Response | None = None
                 for attempt in range(BROWSER_NAVIGATION_RETRIES):
                     try:
-                        page.goto(url)
+                        response = page.goto(url)
                         break
                     except Error as exc:
                         if (
@@ -180,16 +181,29 @@ class ChromeBrowserManager:
                             time.sleep(0.5)
                         else:
                             raise
+                # goto() does not raise on HTTP error statuses, and gaMapReady never
+                # fires when the portal errors — fail fast instead of waiting for the
+                # gaMapReady timeout below.
+                if response is not None and not response.ok:
+                    raise RuntimeError(
+                        f"web-portal returned HTTP {response.status} for {url}"
+                    )
                 page.evaluate(
                     """
-                    new Promise(resolve => {
+                    (timeoutMs) => new Promise((resolve, reject) => {
+                        const timer = setTimeout(
+                            () => reject(new Error('gaMapReady timeout')), timeoutMs
+                        );
                         window.addEventListener("message", event => {
-                            if (event.data.type === 'gaMapReady') resolve(event.data);
+                            if (event.data.type === 'gaMapReady') {
+                                clearTimeout(timer);
+                                resolve(event.data);
+                            }
                         });
                     })
-                    """
+                    """,
+                    TIMEOUT_LOADING_WEB_PAGE,
                 )
-                page.wait_for_load_state("networkidle")
             logger.info("Page loaded")
 
             is_landscape = payload["print_orientation"] == "landscape"

@@ -34,7 +34,9 @@ SQS_WAIT_TIME_SECONDS: int = int(os.environ.get("SQS_WAIT_TIME_SECONDS", "20"))
 SQS_DLQ_WAIT_TIME_SECONDS: int = int(os.environ.get("SQS_DLQ_WAIT_TIME_SECONDS", "2"))
 SQS_MAX_MESSAGES: int = int(os.environ.get("SQS_MAX_MESSAGES", "1"))
 SQS_MAX_RECEIVE_COUNT: int = int(os.environ.get("SQS_MAX_RECEIVE_COUNT", "3"))
-SQS_VISIBILITY_TIMEOUT: int = int(os.environ.get("SQS_VISIBILITY_TIMEOUT", "60"))
+# Must exceed the worst-case render time (2 x TIMEOUT_LOADING_WEB_PAGE + PDF render/upload)
+# so a slow job is never redelivered to another consumer while still being processed.
+SQS_VISIBILITY_TIMEOUT: int = int(os.environ.get("SQS_VISIBILITY_TIMEOUT", "90"))
 
 # AWS_LOCAL
 AWS_LOCAL: bool = os.environ.get("AWS_LOCAL", "false").lower() == "true"
