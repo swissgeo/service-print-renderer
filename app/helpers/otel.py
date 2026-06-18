@@ -60,29 +60,37 @@ def initialize() -> None:
 
 
 def setup_trace_provider() -> None:
-    """Configure and register the OTLP trace provider.
+    """Configure and register the trace provider.
 
     Controlled by env vars:
     - OTEL_SDK_DISABLED: disables all instrumentation when true
+    - OTEL_ENABLE_OTLP_EXPORTER: export spans to the OTLP collector when true
+      (default), otherwise print them to the console (no collector required)
     - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP collector endpoint (default: http://localhost:4317)
-    - OTEL_EXPORTER_OTLP_HEADERS: optional headers for the exporter
+    - OTEL_EXPORTER_OTLP_HEADERS: optional headers for the OTLP exporter
     - OTEL_EXPORTER_OTLP_INSECURE: use insecure (plaintext) connection when true
     """
     if not strtobool(getenv("OTEL_SDK_DISABLED", "false")):
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
-            OTLPSpanExporter,
-        )
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
 
-        span_processor = BatchSpanProcessor(
-            OTLPSpanExporter(
+        exporter: SpanExporter
+        if strtobool(getenv("OTEL_ENABLE_OTLP_EXPORTER", "true")):
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+                OTLPSpanExporter,
+            )
+
+            exporter = OTLPSpanExporter(
                 endpoint=getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
                 headers=getenv("OTEL_EXPORTER_OTLP_HEADERS"),
                 insecure=strtobool(getenv("OTEL_EXPORTER_OTLP_INSECURE", "false")),
             )
-        )
+        else:
+            from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+
+            exporter = ConsoleSpanExporter()
+
         provider = TracerProvider(resource=Resource.create())
-        provider.add_span_processor(span_processor)
+        provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
