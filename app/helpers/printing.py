@@ -185,9 +185,7 @@ class ChromeBrowserManager:
                 # fires when the portal errors — fail fast instead of waiting for the
                 # gaMapReady timeout below.
                 if response is not None and not response.ok:
-                    raise RuntimeError(
-                        f"web-portal returned HTTP {response.status} for {url}"
-                    )
+                    raise RuntimeError(f"web-portal returned HTTP {response.status} for {url}")
                 page.evaluate(
                     """
                     (timeoutMs) => new Promise((resolve, reject) => {
