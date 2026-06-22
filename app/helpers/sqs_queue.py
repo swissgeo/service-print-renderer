@@ -29,7 +29,7 @@ def get_sqs_client() -> SQSClient:
     """
     Initializes and returns an SQS client object.
 
-    Connects to LocalStack if AWS_LOCAL=true, otherwise to AWS.
+    Connects to moto if AWS_LOCAL=true, otherwise to AWS.
     """
     boto_config = Config(
         connect_timeout=AWS_CONNECT_TIMEOUT,

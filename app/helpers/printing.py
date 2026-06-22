@@ -2,10 +2,9 @@
 
 import contextlib
 import logging
-import math
 import time
 from typing import TYPE_CHECKING
-from urllib.parse import parse_qsl, urlencode
+from urllib.parse import urlencode
 
 from playwright.sync_api import Error, sync_playwright
 
@@ -15,24 +14,23 @@ if TYPE_CHECKING:
     from types import TracebackType
     from typing import Self
 
-    from playwright.sync_api import Browser, BrowserContext, Page, Playwright
+    from playwright.sync_api import Browser, BrowserContext, Page, Playwright, Response
 
 from app.config.settings import (
     BROWSER_LAUNCH_ARGS,
     BROWSER_NAVIGATION_RETRIES,
-    GO_ONE_Z_FURTHER,
-    MATRIX_LV95,
-    PAPER_SIZES,
-    ROUND_UP_TO_NEXT_Z_INT,
+    PORTAL_URL,
     TIMEOUT_LOADING_WEB_PAGE,
-    VIEWER_URL_LEGEND,
-    VIEWER_URL_MAP,
-    VIEWER_URL_MAP_RASTER,
 )
 
 logger = logging.getLogger(__name__)
 
 _CHROME_EXECUTABLE = "/usr/bin/google-chrome"
+
+# TODO: remove once the web-portal does not take this value as a mandatory parameter.
+# The web-portal currently fails to render without a z= query param, so we send a
+# fixed placeholder zoom as a temporary shim.
+_TEMPORARY_Z = 8
 
 
 @contextlib.contextmanager
@@ -46,14 +44,15 @@ def _timed(label: str) -> Generator:
         logger.debug("%s took %.3fs", label, elapsed)
 
 
-def _remove_z_param(query: str) -> str:
-    """Strip the z= parameter from a URL query string.
+def _format_query_value(value: object) -> str:
+    """Render a payload value for use in the web-portal query string.
 
-    The zoom level is recalculated from the scale denominator, so any
-    z already present in the client query must be removed first.
+    Booleans are lowercased to ``true``/``false`` so the web-portal receives
+    JS-style flags rather than Python's capitalised ``True``/``False``.
     """
-    params = parse_qsl(query, keep_blank_values=True)
-    return urlencode([(k, v) for k, v in params if k != "z"])
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 class ChromeBrowserManager:
@@ -93,80 +92,34 @@ class ChromeBrowserManager:
     # Private helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _denom_to_z_lv95(denom: int) -> float:
-        """Interpolate a (fractional) zoom level from a scale denominator."""
-        z_keys = list(MATRIX_LV95.keys())
+    def _build_url(self, payload: dict) -> str:
+        """Construct the full web-portal URL for the current job.
 
-        n_unbound = next((i for i, v in enumerate(MATRIX_LV95.values()) if v < denom), -1)
+        The URL has the shape ``<base>/<print_lang>/print?<query>`` where the
+        query carries the ``state`` id and every ``print_*`` payload key
+        (except ``print_lang``, which is part of the path). All values are
+        forwarded to the web-portal verbatim — no zoom/resolution math happens
+        here. A fixed placeholder ``z`` is also sent as a temporary shim; see
+        ``_TEMPORARY_Z``.
+        """
+        if not PORTAL_URL:
+            raise ValueError("PORTAL_URL is not configured — set it in your environment")
 
-        n = max(0, n_unbound - 1) if n_unbound >= 0 else len(z_keys) - 2
-        z_n = z_keys[n]
-        z_np1 = z_keys[n + 1]
-        delta_z = math.log(denom / MATRIX_LV95[z_n]) / math.log(
-            MATRIX_LV95[z_np1] / MATRIX_LV95[z_n]
-        )
-        return round(z_n + delta_z * (z_np1 - z_n), 3)
+        base = PORTAL_URL.rstrip("?/")
+        path = f"{base}/{payload['print_lang']}/print"
 
-    def _resolve_job_params(self, payload: dict) -> dict:
-        """Derive all rendering parameters from the job payload."""
-        paper_size = str(payload["format"]).lower()
-        denom = int(payload["scale"])
-        resolution = int(payload.get("resolution", 96)) or 96
-        dpi = resolution
+        query_items: list[tuple[str, str]] = [
+            ("state", str(payload["state_id"])),
+            # TODO: remove _TEMPORARY_Z once the web-portal reads zoom from print_scale.
+            ("z", str(_TEMPORARY_Z)),
+        ]
+        query_items += [
+            (key, _format_query_value(value))
+            for key, value in payload.items()
+            if key.startswith("print_") and key != "print_lang"
+        ]
 
-        z_exact = self._denom_to_z_lv95(denom)
-        z = z_exact
-
-        if ROUND_UP_TO_NEXT_Z_INT:
-            z_ceil = math.ceil(z_exact)
-            dpi = round(96 * (denom / MATRIX_LV95[z_ceil]))
-            z = z_ceil
-
-        if GO_ONE_Z_FURTHER:
-            z = z + 1
-            dpi = round(96 * (denom / MATRIX_LV95[int(z)]))
-
-        scale = 96 / dpi
-        orientation_code = "L" if payload["orientation"] == "landscape" else "P"
-        print_config = f"{paper_size}_{orientation_code},{dpi}".upper()
-
-        if payload["orientation"] == "portrait":
-            width, height = PAPER_SIZES[paper_size]
-        else:
-            height, width = PAPER_SIZES[paper_size]
-
-        return {
-            "paper_size": paper_size,
-            "dpi": dpi,
-            "z": z,
-            "scale": scale,
-            "print_config": print_config,
-            "width": width,
-            "height": height,
-            "resolution": resolution,
-        }
-
-    def _build_url(self, payload: dict, params: dict) -> str:
-        """Construct the full webmapviewer URL for the current job."""
-        query = _remove_z_param(str(payload["query"]))
-        view = str(payload.get("view", "print_map"))
-
-        if view == "print_legend":
-            base_url = VIEWER_URL_LEGEND
-            env_var = "VIEWER_URL_LEGEND"
-        elif view == "print_vec_map":
-            base_url = VIEWER_URL_MAP
-            env_var = "VIEWER_URL_MAP"
-        else:
-            base_url = VIEWER_URL_MAP_RASTER
-            env_var = "VIEWER_URL_MAP_RASTER"
-
-        if not base_url:
-            msg = f"{env_var} is not configured — set it in your environment"
-            raise ValueError(msg)
-
-        return f"{base_url}?{query}&printConfig={params['print_config']}&z={params['z']}"
+        return f"{path}?{urlencode(query_items)}"
 
     # ------------------------------------------------------------------
     # Public interface
@@ -175,13 +128,15 @@ class ChromeBrowserManager:
     def render_to_pdf(self, payload: dict, output_path: Path) -> None:
         """Render a print job to PDF, reusing the long-lived Chrome process.
 
-        A fresh ``BrowserContext`` is created for each job (to apply the
-        job-specific viewport and device scale) and closed when done, so
-        successive jobs do not share any browser state.
+        A fresh ``BrowserContext`` is created for each job and closed when
+        done, so successive jobs do not share any browser state. The browser
+        runs at a device pixel ratio of 1; the web-portal is responsible for all
+        layout, zoom and resolution.
 
         Args:
-            payload: The job payload dict (format, orientation, scale,
-                     resolution, view, query).
+            payload: The job payload dict (print_format, print_orientation,
+                     print_scale, print_resolution, print_lang, state_id,
+                     print_legend, print_grid).
             output_path: Destination path for the generated PDF.
 
         Raises:
@@ -189,34 +144,30 @@ class ChromeBrowserManager:
                           encounters an unrecoverable error.
         """
         if not self._browser:
-            msg = "Browser is not initialised — use ChromeBrowserManager as a context manager"
-            raise RuntimeError(msg)
+            raise RuntimeError(
+                "Browser is not initialised — use ChromeBrowserManager as a context manager"
+            )
 
-        params = self._resolve_job_params(payload)
         logger.info(
-            "Rendering job (format=%s, orientation=%s, dpi=%d, z=%.3f)",
-            params["paper_size"],
-            payload["orientation"],
-            params["dpi"],
-            params["z"],
+            "Rendering job (format=%s, orientation=%s)",
+            payload["print_format"],
+            payload["print_orientation"],
         )
 
-        context: BrowserContext = self._browser.new_context(
-            viewport={"width": params["width"], "height": params["height"]},
-            device_scale_factor=params["resolution"] / 96,
-        )
+        context: BrowserContext = self._browser.new_context()
         try:
             page: Page = context.new_page()
             page.set_default_timeout(TIMEOUT_LOADING_WEB_PAGE)
 
             with _timed("build_url"):
-                url = self._build_url(payload, params)
+                url = self._build_url(payload)
 
             logger.info("Navigating to %s", url)
             with _timed("navigate_to_url"):
+                response: Response | None = None
                 for attempt in range(BROWSER_NAVIGATION_RETRIES):
                     try:
-                        page.goto(url)
+                        response = page.goto(url)
                         break
                     except Error as exc:
                         if (
@@ -230,20 +181,31 @@ class ChromeBrowserManager:
                             time.sleep(0.5)
                         else:
                             raise
+                # goto() does not raise on HTTP error statuses, and gaMapReady never
+                # fires when the portal errors — fail fast instead of waiting for the
+                # gaMapReady timeout below.
+                if response is not None and not response.ok:
+                    raise RuntimeError(f"web-portal returned HTTP {response.status} for {url}")
                 page.evaluate(
                     """
-                    new Promise(resolve => {
+                    (timeoutMs) => new Promise((resolve, reject) => {
+                        const timer = setTimeout(
+                            () => reject(new Error('gaMapReady timeout')), timeoutMs
+                        );
                         window.addEventListener("message", event => {
-                            if (event.data.type === 'gaMapReady') resolve(event.data);
+                            if (event.data.type === 'gaMapReady') {
+                                clearTimeout(timer);
+                                resolve(event.data);
+                            }
                         });
                     })
-                    """
+                    """,
+                    TIMEOUT_LOADING_WEB_PAGE,
                 )
-                page.wait_for_load_state("networkidle")
             logger.info("Page loaded")
 
-            is_landscape = payload["orientation"] == "landscape"
-            page_format = str(payload["format"]).upper()
+            is_landscape = payload["print_orientation"] == "landscape"
+            page_format = str(payload["print_format"]).upper()
             logger.info("Saving PDF to %s", output_path)
             with _timed("save_page_as_pdf"):
                 page.emulate_media(media="print")
@@ -252,7 +214,6 @@ class ChromeBrowserManager:
                     format=page_format,
                     landscape=is_landscape,
                     print_background=True,
-                    scale=params["scale"],
                 )
             logger.info("PDF saved successfully")
         except Error as exc:

@@ -95,15 +95,17 @@ def handle_message(
     trace.get_current_span().set_attribute("job.id", job_id)
     trace.get_current_span().set_attribute("messaging.receive_count", receive_count)
     try:
-        pdf_url = process_job(job, browser)
+        pdf_location = process_job(job, browser)
+        # The PDF lives at a deterministic key ({prefix}/{job_id}.pdf), so we only
+        # record that the job finished — service-print-api derives the pdf URL from
+        # the job_id once the status is 'finished'.
         update_job_status(
             job_id,
             "finished",
             finished_timestamp_iso_8601=get_iso_8601_timestamp(),
-            pdf_url=pdf_url,
         )
         delete_message(receipt_handle, get_queue_url())
-        logger.info("Job %s completed successfully", job_id)
+        logger.info("Job %s completed successfully (pdf uploaded to %s)", job_id, pdf_location)
     except Exception as exc:
         logger.exception("Job %s failed during processing", job_id)
         trace.get_current_span().set_status(StatusCode.ERROR, str(exc))
