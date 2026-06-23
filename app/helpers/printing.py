@@ -3,18 +3,21 @@
 import contextlib
 import logging
 import time
-from typing import TYPE_CHECKING
+from collections.abc import Generator
+from pathlib import Path
+from types import TracebackType
+from typing import Self
 from urllib.parse import urlencode
 
-from playwright.sync_api import Error, sync_playwright
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
-    from pathlib import Path
-    from types import TracebackType
-    from typing import Self
-
-    from playwright.sync_api import Browser, BrowserContext, Page, Playwright, Response
+from playwright.sync_api import (
+    Browser,
+    BrowserContext,
+    Error,
+    Page,
+    Playwright,
+    Response,
+    sync_playwright,
+)
 
 from app.config.settings import (
     BROWSER_LAUNCH_ARGS,

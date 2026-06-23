@@ -18,6 +18,9 @@ from app.config.settings import (
     SQS_QUEUE_NAME,
 )
 
+# mypy_boto3_sqs ships with boto3-stubs, a dev-only dependency that is not
+# installed in production, so this type-only import must stay under
+# TYPE_CHECKING: Importing it at runtime would raise ImportError.
 if TYPE_CHECKING:
     from mypy_boto3_sqs import SQSClient
 

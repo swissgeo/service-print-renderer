@@ -6,6 +6,9 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError, ConnectTimeoutError, ReadTimeoutError
 
+# mypy_boto3_dynamodb ships with boto3-stubs, a dev-only dependency that is not
+# installed in production, so these type-only imports must stay under
+# TYPE_CHECKING: Importing them at runtime would raise ImportError.
 if TYPE_CHECKING:
     from mypy_boto3_dynamodb import DynamoDBServiceResource
     from mypy_boto3_dynamodb.service_resource import Table

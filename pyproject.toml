@@ -68,6 +68,14 @@ ignore = [
     "TD",     # Ignore flake8-todos
     "FIX",    # Ignore fixme comments
     "COM812", # flak8-commas missing-trailing-comma is ignored to avoid conflict with formatter which enforces trailing commas
+
+    # Don't force runtime imports used only in annotations into TYPE_CHECKING
+    # blocks. Plain top-level imports keep annotations readable; TYPE_CHECKING is
+    # reserved for imports that genuinely cannot run at runtime (e.g. dev-only
+    # boto3 stubs).
+    "TC001", # Ignore type annotation not in TYPE_CHECKING block for first party import
+    "TC002", # Ignore type annotation not in TYPE_CHECKING block for third party import
+    "TC003", # Ignore type annotation not in TYPE_CHECKING block for standard library import
 ]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.

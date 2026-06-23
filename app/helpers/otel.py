@@ -1,15 +1,12 @@
 import functools
+import logging
+from collections.abc import Callable
 from os import getenv
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    import logging
-    from collections.abc import Callable
-
-    from opentelemetry.sdk._logs import LoggerProvider
-    from opentelemetry.sdk.trace import TracerProvider
+from typing import Any
 
 from opentelemetry import trace
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.trace import SpanKind
 
 # Set by setup_logger_provider(), read by get_otel_handler() when the logging
