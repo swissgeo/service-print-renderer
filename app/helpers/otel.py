@@ -5,8 +5,19 @@ from os import getenv
 from typing import Any
 
 from opentelemetry import trace
-from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.botocore import BotocoreInstrumentor
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import (
+    BatchSpanProcessor,
+    ConsoleSpanExporter,
+    SpanExporter,
+)
 from opentelemetry.trace import SpanKind
 
 # Set by setup_logger_provider(), read by get_otel_handler() when the logging
@@ -55,8 +66,6 @@ def initialize() -> None:
     if not strtobool(getenv("OTEL_SDK_DISABLED", "false")) and strtobool(
         getenv("OTEL_ENABLE_BOTOCORE", "false")
     ):
-        from opentelemetry.instrumentation.botocore import BotocoreInstrumentor
-
         BotocoreInstrumentor().instrument()
 
 
@@ -79,22 +88,14 @@ def setup_trace_provider() -> TracerProvider | None:
     if strtobool(getenv("OTEL_SDK_DISABLED", "false")):
         return None
 
-    from opentelemetry.sdk.resources import Resource
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
-
     exporter: SpanExporter
     if strtobool(getenv("OTEL_ENABLE_OTLP_EXPORTER", "true")):
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-
         exporter = OTLPSpanExporter(
             endpoint=getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
             headers=getenv("OTEL_EXPORTER_OTLP_HEADERS"),
             insecure=strtobool(getenv("OTEL_EXPORTER_OTLP_INSECURE", "false")),
         )
     else:
-        from opentelemetry.sdk.trace.export import ConsoleSpanExporter
-
         exporter = ConsoleSpanExporter()
 
     provider = TracerProvider(resource=Resource.create())
@@ -121,12 +122,6 @@ def setup_logger_provider() -> LoggerProvider | None:
     ):
         return None
 
-    from opentelemetry._logs import set_logger_provider
-    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
-    from opentelemetry.sdk._logs import LoggerProvider
-    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-    from opentelemetry.sdk.resources import Resource
-
     provider = LoggerProvider(resource=Resource.create())
     provider.add_log_record_processor(
         BatchLogRecordProcessor(
@@ -149,8 +144,6 @@ def get_otel_handler() -> logging.Handler:
     ``setup_logger_provider()`` must have run first (with OTLP export enabled),
     otherwise there is no provider to attach to.
     """
-    from opentelemetry.sdk._logs import LoggingHandler
-
     if _log_provider is None:
         raise ValueError(
             "OTEL log provider is not available — call setup_logger_provider() before "
