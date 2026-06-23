@@ -20,25 +20,11 @@ from opentelemetry.sdk.trace.export import (
 )
 from opentelemetry.trace import SpanKind
 
+from app.helpers.utils import strtobool
+
 # Set by setup_logger_provider(), read by get_otel_handler() when the logging
 # config resolves the ``otel`` handler. None when OTLP log export is not enabled.
 _log_provider: LoggerProvider | None = None
-
-
-def strtobool(value: str) -> bool:
-    """Convert a string representation of truth to True or False.
-
-    True values: 'y', 'yes', 'true', 'on', '1'.
-    False values: 'n', 'no', 'false', 'off', '0', ''.
-
-    Raises ValueError if value is anything else.
-    """
-    value = value.lower().strip()
-    if value in ("true", "1", "yes", "y", "on"):
-        return True
-    if value in ("false", "0", "no", "n", "off", ""):
-        return False
-    raise ValueError(f"Cannot convert '{value}' to boolean")
 
 
 def traced(span_name: str, kind: SpanKind = SpanKind.INTERNAL) -> Callable:
