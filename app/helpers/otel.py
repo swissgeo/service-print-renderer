@@ -1,9 +1,9 @@
 import functools
-import logging
 from os import getenv
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    import logging
     from collections.abc import Callable
 
     from opentelemetry.sdk._logs import LoggerProvider
@@ -49,22 +49,18 @@ def traced(span_name: str, kind: SpanKind = SpanKind.INTERNAL) -> Callable:
 
 
 def initialize() -> None:
-    """Initialize OTEL instrumentation for logging and botocore.
+    """Initialize OTEL instrumentation for botocore.
 
     Should be called at worker startup. Controlled by env vars:
     - OTEL_SDK_DISABLED: disables all instrumentation when true
-    - OTEL_ENABLE_LOGGING: enables LoggingInstrumentor when true
     - OTEL_ENABLE_BOTOCORE: enables BotocoreInstrumentor when true
     """
-    if not strtobool(getenv("OTEL_SDK_DISABLED", "false")):
-        if strtobool(getenv("OTEL_ENABLE_LOGGING", "false")):
-            from opentelemetry.instrumentation.logging import LoggingInstrumentor
+    if not strtobool(getenv("OTEL_SDK_DISABLED", "false")) and strtobool(
+        getenv("OTEL_ENABLE_BOTOCORE", "false")
+    ):
+        from opentelemetry.instrumentation.botocore import BotocoreInstrumentor
 
-            LoggingInstrumentor().instrument()
-        if strtobool(getenv("OTEL_ENABLE_BOTOCORE", "false")):
-            from opentelemetry.instrumentation.botocore import BotocoreInstrumentor
-
-            BotocoreInstrumentor().instrument()
+        BotocoreInstrumentor().instrument()
 
 
 def setup_trace_provider() -> TracerProvider | None:

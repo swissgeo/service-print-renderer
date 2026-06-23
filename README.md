@@ -174,7 +174,6 @@ The worker exports **traces** via OpenTelemetry (OTLP) by default, and can also 
 | `OTEL_SDK_DISABLED` | `false` | Set to `true` to disable all OTEL instrumentation |
 | `OTEL_ENABLE_BOTOCORE` | `false` | Set to `true` to trace DynamoDB, SQS, and S3 calls |
 | `OTEL_ENABLE_OTLP_EXPORTER` | `true` | Export spans/logs to the OTLP collector; set `false` to print spans to the console instead (no collector required) |
-| `OTEL_ENABLE_LOGGING` | `false` | Enables the deprecated `LoggingInstrumentor`. Left off, see [Logging implementation](#logging-implementation) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP gRPC endpoint of the collector |
 | `OTEL_EXPORTER_OTLP_INSECURE` | `false` | Set to `true` for an insecure (non-TLS) connection. Required for a plaintext local collector |
 | `OTEL_EXPORTER_OTLP_HEADERS` | - | Optional headers for the OTLP collector (e.g. for authentication) |

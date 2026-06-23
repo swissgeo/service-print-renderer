@@ -6,8 +6,6 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "boto3~=1.42",
-    "ecs-logging~=2.2",
-    "logging-utilities~=5.3",
     "playwright~=1.54",
     "python-dotenv~=1.2",
     "pyyaml~=6.0",
@@ -15,7 +13,6 @@ dependencies = [
     # OpenTelemetry packages
     "opentelemetry-sdk~=1.39",
     "opentelemetry-exporter-otlp~=1.39",
-    "opentelemetry-instrumentation-logging==0.60b1",
     "opentelemetry-instrumentation-botocore==0.60b1",
 ]
 
