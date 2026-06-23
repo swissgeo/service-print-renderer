@@ -20,9 +20,11 @@ from opentelemetry.sdk.trace.export import (
 )
 from opentelemetry.trace import SpanKind
 
-from app.helpers.utils import strtobool
+from app.helpers.utils import init_logging, strtobool
 
-# Set by setup_logger_provider(), read by get_otel_handler() when the logging
+_RESOURCE = Resource.create({"service.name": "service-print-renderer"})
+
+# Set by _setup_logger_provider(), read by get_otel_handler() when the logging
 # config resolves the ``otel`` handler. None when OTLP log export is not enabled.
 _log_provider: LoggerProvider | None = None
 
@@ -42,34 +44,65 @@ def traced(span_name: str, kind: SpanKind = SpanKind.INTERNAL) -> Callable:
     return decorator
 
 
-def initialize() -> None:
-    """Initialize OTEL instrumentation for botocore.
+def initialize_otel() -> tuple[TracerProvider | None, LoggerProvider | None]:
+    """Initialize OpenTelemetry instrumentation, providers, and logging.
 
-    Should be called at worker startup. Controlled by env vars:
+    Call once at worker startup. Performs, in order: botocore instrumentation,
+    trace provider setup, OTLP log provider setup, and ``init_logging()`` (which
+    must run last so the logging config's ``otel`` handler can resolve via
+    ``get_otel_handler()``).
+
+    Returns (trace_provider, logger_provider) so the caller can ``shutdown()``
+    them on exit, flushing spans/logs still buffered in their batch processors.
+    Either is None when the corresponding feature is disabled.
+
+    Controlled by env vars:
     - OTEL_SDK_DISABLED: disables all instrumentation when true
     - OTEL_ENABLE_BOTOCORE: enables BotocoreInstrumentor when true
+    - OTEL_ENABLE_OTLP_EXPORTER: export spans to the OTLP collector when true
+      (default), otherwise print them to the console (no collector required);
+      log export is disabled when false
+    - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP collector endpoint (default: http://localhost:4317)
+    - OTEL_EXPORTER_OTLP_HEADERS: optional headers for the OTLP exporter
+    - OTEL_EXPORTER_OTLP_INSECURE: use insecure (plaintext) connection when true
     """
     if not strtobool(getenv("OTEL_SDK_DISABLED", "false")) and strtobool(
         getenv("OTEL_ENABLE_BOTOCORE", "false")
     ):
         BotocoreInstrumentor().instrument()
 
+    trace_provider = _setup_trace_provider()
+    # The OTLP log provider must be set up before init_logging(): the logging
+    # config's `otel` handler resolves via get_otel_handler(), which needs it.
+    logger_provider = _setup_logger_provider()
+    init_logging()
 
-def setup_trace_provider() -> TracerProvider | None:
+    return trace_provider, logger_provider
+
+
+def shutdown_otel(
+    trace_provider: TracerProvider | None,
+    logger_provider: LoggerProvider | None,
+) -> None:
+    """Flush and shut down the OTEL providers returned by initialize_otel().
+
+    Draining the batch processors flushes spans/logs still buffered before the
+    process exits. Accepts None for either provider (when the feature was
+    disabled) and ignores it.
+    """
+    if trace_provider is not None:
+        trace_provider.shutdown()
+    if logger_provider is not None:
+        logger_provider.shutdown()
+
+
+def _setup_trace_provider() -> TracerProvider | None:
     """Configure and register the trace provider.
 
     Returns the provider so the caller can ``shutdown()`` it on exit. This
     flushes the BatchSpanProcessor's buffered spans, which are otherwise lost
     when the process stops before the next batch tick. Returns None when the
     SDK is disabled.
-
-    Controlled by env vars:
-    - OTEL_SDK_DISABLED: disables all instrumentation when true
-    - OTEL_ENABLE_OTLP_EXPORTER: export spans to the OTLP collector when true
-      (default), otherwise print them to the console (no collector required)
-    - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP collector endpoint (default: http://localhost:4317)
-    - OTEL_EXPORTER_OTLP_HEADERS: optional headers for the OTLP exporter
-    - OTEL_EXPORTER_OTLP_INSECURE: use insecure (plaintext) connection when true
     """
     if strtobool(getenv("OTEL_SDK_DISABLED", "false")):
         return None
@@ -84,22 +117,19 @@ def setup_trace_provider() -> TracerProvider | None:
     else:
         exporter = ConsoleSpanExporter()
 
-    provider = TracerProvider(resource=Resource.create())
+    provider = TracerProvider(resource=_RESOURCE)
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
     return provider
 
 
-def setup_logger_provider() -> LoggerProvider | None:
+def _setup_logger_provider() -> LoggerProvider | None:
     """Configure and register an OTLP log provider for exporting logs to the collector.
 
-    Must be called before the logging config is loaded so ``get_otel_handler()``
-    can resolve the provider. Returns the provider so the caller can ``shutdown()``
-    it on exit (flushing the BatchLogRecordProcessor). Returns None and the
-    ``otel`` logging handler is then unavailable, when the SDK is disabled or the
-    OTLP exporter is turned off (``OTEL_ENABLE_OTLP_EXPORTER=false``).
-
-    Reads the same OTEL_EXPORTER_OTLP_* env vars as setup_trace_provider().
+    Returns the provider so the caller can ``shutdown()`` it on exit (flushing
+    the BatchLogRecordProcessor). Returns None, and the ``otel`` logging handler
+    is then unavailable, when the SDK is disabled or the OTLP exporter is turned
+    off (``OTEL_ENABLE_OTLP_EXPORTER=false``).
     """
     global _log_provider  # noqa: PLW0603
 
@@ -108,7 +138,7 @@ def setup_logger_provider() -> LoggerProvider | None:
     ):
         return None
 
-    provider = LoggerProvider(resource=Resource.create())
+    provider = LoggerProvider(resource=_RESOURCE)
     provider.add_log_record_processor(
         BatchLogRecordProcessor(
             OTLPLogExporter(
@@ -127,12 +157,12 @@ def get_otel_handler() -> logging.Handler:
     """Return an OTEL LoggingHandler bound to the configured log provider.
 
     Referenced from the logging config as ``(): app.helpers.otel.get_otel_handler``.
-    ``setup_logger_provider()`` must have run first (with OTLP export enabled),
+    ``initialize_otel()`` must have run first (with OTLP export enabled),
     otherwise there is no provider to attach to.
     """
     if _log_provider is None:
         raise ValueError(
-            "OTEL log provider is not available — call setup_logger_provider() before "
+            "OTEL log provider is not available — call initialize_otel() before "
             "loading the logging config, and ensure OTEL_ENABLE_OTLP_EXPORTER is true"
         )
     return LoggingHandler(logger_provider=_log_provider)

@@ -27,7 +27,7 @@ from app.config.settings import (
 )
 from app.helpers.dynamo_db import get_print_job, update_job_status
 from app.helpers.gpu_info import log_gpu_info
-from app.helpers.otel import initialize, setup_logger_provider, setup_trace_provider, traced
+from app.helpers.otel import initialize_otel, shutdown_otel, traced
 from app.helpers.printing import ChromeBrowserManager, RenderingError
 from app.helpers.s3 import upload_pdf
 from app.helpers.sqs_queue import (
@@ -237,12 +237,7 @@ if __name__ == "__main__":
         log_gpu_info()
         sys.exit(0)
 
-    initialize()
-    trace_provider = setup_trace_provider()
-    # Set up the OTLP log provider before init_logging(): the logging config's
-    # `otel` handler resolves via get_otel_handler(), which needs the provider.
-    logger_provider = setup_logger_provider()
-    init_logging()
+    trace_provider, logger_provider = initialize_otel()
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -253,8 +248,4 @@ if __name__ == "__main__":
         logger.exception("Unhandled exception in worker")
         sys.exit(1)
     finally:
-        # Flush spans/logs still buffered in their batch processors before exit.
-        if trace_provider is not None:
-            trace_provider.shutdown()
-        if logger_provider is not None:
-            logger_provider.shutdown()
+        shutdown_otel(trace_provider, logger_provider)
