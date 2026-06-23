@@ -25,6 +25,18 @@ from app.config.settings import (
 
 logger = logging.getLogger(__name__)
 
+
+class RenderingError(RuntimeError):
+    """A single job could not be rendered to PDF.
+
+    Signals a job-level failure (the web-portal errored, or Playwright failed
+    while rendering) that the worker can act on by letting SQS redrive the
+    message. It is deliberately distinct from configuration/programming errors
+    (e.g. unset ``PORTAL_URL`` or an uninitialised browser), which should crash
+    the worker instead of being treated as a bad job.
+    """
+
+
 _CHROME_EXECUTABLE = "/usr/bin/google-chrome"
 
 # TODO: remove once the web-portal does not take this value as a mandatory parameter.
@@ -140,8 +152,9 @@ class ChromeBrowserManager:
             output_path: Destination path for the generated PDF.
 
         Raises:
-            RuntimeError: If the browser is not initialised or Playwright
-                          encounters an unrecoverable error.
+            RuntimeError: If the browser is not initialised (a programming error).
+            RenderingError: If the web-portal errors or Playwright fails to
+                            render the job (a job-level failure).
         """
         if not self._browser:
             raise RuntimeError(
@@ -185,7 +198,7 @@ class ChromeBrowserManager:
                 # fires when the portal errors — fail fast instead of waiting for the
                 # gaMapReady timeout below.
                 if response is not None and not response.ok:
-                    raise RuntimeError(f"web-portal returned HTTP {response.status} for {url}")
+                    raise RenderingError(f"web-portal returned HTTP {response.status} for {url}")
                 page.evaluate(
                     """
                     (timeoutMs) => new Promise((resolve, reject) => {
@@ -219,7 +232,7 @@ class ChromeBrowserManager:
         except Error as exc:
             logger.exception("Playwright error during rendering")
             msg = "PDF rendering failed"
-            raise RuntimeError(msg) from exc
+            raise RenderingError(msg) from exc
         finally:
             context.close()
 
