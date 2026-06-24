@@ -159,6 +159,16 @@ test: $(LOGS_DIR) ## Run tests locally
 	$(TEST) --cov --cov-branch --cov-report=html
 
 
+.PHONY: start-otel
+start-otel: ## Run otel collector and jaeger trace analyzer locally
+	docker compose -p service-print-local-otel -f docker-compose-otel.yml up -d
+
+
+.PHONY: stop-otel
+stop-otel: ## Stop the otel collector and jaeger trace analyzer
+	docker compose -p service-print-local-otel -f docker-compose-otel.yml down
+
+
 .PHONY: help
 help: ## Display this help
 # automatically generate the help page based on the documentation after each make target

@@ -8,14 +8,30 @@ processors:
   batch:
 
 exporters:
-  debug:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  debug/traces:
     verbosity: detailed
-  zipkin:
-    endpoint: http://zipkin:9411/api/v2/spans
+
+  debug/logs:
+    verbosity: detailed
+
+  debug/metrics:
+    verbosity: detailed
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug, zipkin]
+      exporters: [otlp/jaeger]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug/logs]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug/metrics]

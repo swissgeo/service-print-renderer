@@ -27,8 +27,8 @@ from app.config.settings import (
 )
 from app.helpers.dynamo_db import get_print_job, update_job_status
 from app.helpers.gpu_info import log_gpu_info
-from app.helpers.otel import initialize, setup_trace_provider, traced
-from app.helpers.printing import ChromeBrowserManager
+from app.helpers.otel import initialize_otel, shutdown_otel, traced
+from app.helpers.printing import ChromeBrowserManager, RenderingError
 from app.helpers.s3 import upload_pdf
 from app.helpers.sqs_queue import (
     delete_message,
@@ -106,7 +106,12 @@ def handle_message(
         )
         delete_message(receipt_handle, get_queue_url())
         logger.info("Job %s completed successfully (pdf uploaded to %s)", job_id, pdf_location)
-    except Exception as exc:
+    except (RenderingError, KeyError) as exc:
+        # Job-level failure: the job itself is bad (unrenderable or malformed
+        # payload). Leave the message on the queue so SQS redrives it; only mark
+        # the job 'error' on the final attempt. Infrastructure errors (AWS
+        # ClientError/timeouts, etc.) are deliberately NOT caught here. They
+        # propagate and crash the worker so the orchestrator restarts it.
         logger.exception("Job %s failed during processing", job_id)
         trace.get_current_span().set_status(StatusCode.ERROR, str(exc))
         if receive_count >= SQS_MAX_RECEIVE_COUNT:
@@ -127,27 +132,26 @@ def handle_dlq_message(job_id: str, receipt_handle: str) -> None:
     if it's not already set to 'error', then delete the message from the DLQ.
     """
     trace.get_current_span().set_attribute("job.id", job_id)
-    try:
-        job_item = get_print_job(job_id)
-        current_status = job_item.get("status", None) if job_item else None
+    # Every call here is an infrastructure call (DynamoDB, SQS). There is no
+    # job-level failure we can act on, so nothing is caught: an error propagates,
+    # the message is left on the DLQ (not deleted), and the worker crashes so the
+    # orchestrator restarts it. The traced span records the exception on the way out.
+    job_item = get_print_job(job_id)
+    current_status = job_item.get("status", None) if job_item else None
 
-        if current_status != "error":
-            update_job_status(
-                job_id,
-                "error",
-                finished_timestamp_iso_8601=get_iso_8601_timestamp(),
-                message="Job moved to DLQ after max retries",
-            )
-            logger.info("Updated job %s status to error from DLQ", job_id)
-        else:
-            logger.debug("Job %s already has error status, skipping update", job_id)
+    if current_status != "error":
+        update_job_status(
+            job_id,
+            "error",
+            finished_timestamp_iso_8601=get_iso_8601_timestamp(),
+            message="Job moved to DLQ after max retries",
+        )
+        logger.info("Updated job %s status to error from DLQ", job_id)
+    else:
+        logger.debug("Job %s already has error status, skipping update", job_id)
 
-        delete_message(receipt_handle, get_dlq_url())
-        logger.debug("Deleted DLQ message for job %s", job_id)
-    except Exception as exc:
-        logger.exception("Failed to process DLQ message for job %s", job_id)
-        trace.get_current_span().set_status(StatusCode.ERROR, str(exc))
-        # Don't delete the message if processing failed
+    delete_message(receipt_handle, get_dlq_url())
+    logger.debug("Deleted DLQ message for job %s", job_id)
 
 
 def run() -> None:
@@ -162,50 +166,55 @@ def run() -> None:
                 not BROWSER_RECYCLE_AFTER_JOBS or jobs_processed < BROWSER_RECYCLE_AFTER_JOBS
             ):
                 touch_probe_file(LIVENESS_PROBE_FILE)
-                try:
+                # Wrap each poll cycle in a span so the SQS ReceiveMessage and the
+                # resulting handle_message spans share one trace instead of the
+                # receive floating as its own root span.
+                with trace.get_tracer(__name__).start_as_current_span(
+                    "worker.poll", kind=SpanKind.CONSUMER
+                ):
+                    # receive_messages only raises infrastructure errors (AWS
+                    # ClientError/timeouts), which we cannot recover from here.
+                    # They propagate and crash the worker so it is restarted.
                     messages = receive_messages(get_queue_url(), SQS_WAIT_TIME_SECONDS)
-                except Exception:
-                    logger.exception("Error receiving messages from SQS, retrying...")
-                    continue
 
-                for message in messages:
-                    touch_probe_file(LIVENESS_PROBE_FILE)
+                    for message in messages:
+                        touch_probe_file(LIVENESS_PROBE_FILE)
+                        receipt_handle: str = message["ReceiptHandle"]
+                        receive_count: int = int(
+                            message.get("Attributes", {}).get("ApproximateReceiveCount", 1)
+                        )
+                        try:
+                            job = parse_message_body(message)
+                            job_id: str = job["job_id"]
+                        except KeyError, ValueError:
+                            logger.exception(
+                                "Malformed SQS message, deleting: %s",
+                                message.get("Body"),
+                            )
+                            delete_message(receipt_handle, get_queue_url())
+                            continue
+
+                        handle_message(job_id, receipt_handle, job, receive_count, browser)
+                        jobs_processed += 1
+
+                # Process DLQ messages. As with the main queue, receive_messages
+                # only raises infrastructure errors, which propagate and crash
+                # the worker rather than being swallowed and retried forever.
+                dlq_messages = receive_messages(get_dlq_url(), SQS_DLQ_WAIT_TIME_SECONDS)
+                for message in dlq_messages:
                     receipt_handle: str = message["ReceiptHandle"]
-                    receive_count: int = int(
-                        message.get("Attributes", {}).get("ApproximateReceiveCount", 1)
-                    )
                     try:
                         job = parse_message_body(message)
                         job_id: str = job["job_id"]
                     except KeyError, ValueError:
                         logger.exception(
-                            "Malformed SQS message, deleting: %s",
+                            "Malformed DLQ message, deleting: %s",
                             message.get("Body"),
                         )
-                        delete_message(receipt_handle, get_queue_url())
+                        delete_message(receipt_handle, get_dlq_url())
                         continue
 
-                    handle_message(job_id, receipt_handle, job, receive_count, browser)
-                    jobs_processed += 1
-
-                # Process DLQ messages
-                try:
-                    dlq_messages = receive_messages(get_dlq_url(), SQS_DLQ_WAIT_TIME_SECONDS)
-                    for message in dlq_messages:
-                        try:
-                            job = parse_message_body(message)
-                            job_id: str = job["job_id"]
-                            receipt_handle: str = message["ReceiptHandle"]
-                            handle_dlq_message(job_id, receipt_handle)
-                        except KeyError, ValueError:
-                            logger.exception(
-                                "Malformed DLQ message, deleting: %s",
-                                message.get("Body"),
-                            )
-                            delete_message(receipt_handle, get_dlq_url())
-
-                except Exception:
-                    logger.exception("Error processing DLQ messages, continuing...")
+                    handle_dlq_message(job_id, receipt_handle)
 
             if not _shutdown:
                 logger.info("Recycling Chrome after %d jobs", jobs_processed)
@@ -223,14 +232,12 @@ if __name__ == "__main__":
     )
     _args = _parser.parse_args()
 
-    init_logging()
-
     if _args.renderer_info:
+        init_logging()
         log_gpu_info()
         sys.exit(0)
 
-    initialize()
-    setup_trace_provider()
+    trace_provider, logger_provider = initialize_otel()
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -240,3 +247,5 @@ if __name__ == "__main__":
     except Exception:
         logger.exception("Unhandled exception in worker")
         sys.exit(1)
+    finally:
+        shutdown_otel(trace_provider, logger_provider)

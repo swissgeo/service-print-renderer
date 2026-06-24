@@ -2,15 +2,17 @@
 
 import logging
 from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError, ConnectTimeoutError, ReadTimeoutError
 
+# mypy_boto3_s3 ships with boto3-stubs, a dev-only dependency that is not
+# installed in production, so this type-only import must stay under
+# TYPE_CHECKING: Importing it at runtime would raise ImportError.
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from mypy_boto3_s3 import S3Client
 
 from app.config.settings import (

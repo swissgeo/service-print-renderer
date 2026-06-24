@@ -3,18 +3,21 @@
 import contextlib
 import logging
 import time
-from typing import TYPE_CHECKING
+from collections.abc import Generator
+from pathlib import Path
+from types import TracebackType
+from typing import Self
 from urllib.parse import urlencode
 
-from playwright.sync_api import Error, sync_playwright
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
-    from pathlib import Path
-    from types import TracebackType
-    from typing import Self
-
-    from playwright.sync_api import Browser, BrowserContext, Page, Playwright, Response
+from playwright.sync_api import (
+    Browser,
+    BrowserContext,
+    Error,
+    Page,
+    Playwright,
+    Response,
+    sync_playwright,
+)
 
 from app.config.settings import (
     BROWSER_LAUNCH_ARGS,
@@ -24,6 +27,18 @@ from app.config.settings import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class RenderingError(RuntimeError):
+    """A single job could not be rendered to PDF.
+
+    Signals a job-level failure (the web-portal errored, or Playwright failed
+    while rendering) that the worker can act on by letting SQS redrive the
+    message. It is deliberately distinct from configuration/programming errors
+    (e.g. unset ``PORTAL_URL`` or an uninitialised browser), which should crash
+    the worker instead of being treated as a bad job.
+    """
+
 
 _CHROME_EXECUTABLE = "/usr/bin/google-chrome"
 
@@ -140,8 +155,9 @@ class ChromeBrowserManager:
             output_path: Destination path for the generated PDF.
 
         Raises:
-            RuntimeError: If the browser is not initialised or Playwright
-                          encounters an unrecoverable error.
+            RuntimeError: If the browser is not initialised (a programming error).
+            RenderingError: If the web-portal errors or Playwright fails to
+                            render the job (a job-level failure).
         """
         if not self._browser:
             raise RuntimeError(
@@ -185,7 +201,7 @@ class ChromeBrowserManager:
                 # fires when the portal errors — fail fast instead of waiting for the
                 # gaMapReady timeout below.
                 if response is not None and not response.ok:
-                    raise RuntimeError(f"web-portal returned HTTP {response.status} for {url}")
+                    raise RenderingError(f"web-portal returned HTTP {response.status} for {url}")
                 page.evaluate(
                     """
                     (timeoutMs) => new Promise((resolve, reject) => {
@@ -219,7 +235,7 @@ class ChromeBrowserManager:
         except Error as exc:
             logger.exception("Playwright error during rendering")
             msg = "PDF rendering failed"
-            raise RuntimeError(msg) from exc
+            raise RenderingError(msg) from exc
         finally:
             context.close()
 
