@@ -22,7 +22,7 @@ from opentelemetry.trace import SpanKind
 
 from app.helpers.utils import init_logging, strtobool
 
-_RESOURCE = Resource.create({"service.name": "service-print-renderer"})
+_RESOURCE = Resource.create({"service.name": "service-print"})
 
 # Set by _setup_logger_provider(), read by get_otel_handler() when the logging
 # config resolves the ``otel`` handler. None when OTLP log export is not enabled.
