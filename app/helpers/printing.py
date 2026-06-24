@@ -185,15 +185,6 @@ class ChromeBrowserManager:
                         window.__GA_MAP_READY__ = true;
                     }
                 });
-                // TODO: the gaMapReady should be fired by the frontend after rendercomplete
-                const __gaMapInterval = setInterval(() => {
-                    if (window.map) {
-                        clearInterval(__gaMapInterval);
-                        window.map.once("rendercomplete", () => {
-                            window.__GA_MAP_READY__ = true;
-                        });
-                    }
-                }, 50);
             """)
 
             logger.info("Navigating to %s", url)
