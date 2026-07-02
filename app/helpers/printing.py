@@ -219,6 +219,10 @@ class ChromeBrowserManager:
 
             is_landscape = payload["print_orientation"] == "landscape"
             page_format = str(payload["print_format"]).upper()
+            # Chrome's PDF renderer assumes 96 CSS px per inch; scale the output so
+            # the requested dpi maps back to that baseline.
+            dpi = float(payload["print_resolution"])
+            scale = 96 / dpi
             logger.info("Saving PDF to %s", output_path)
             with _timed("save_page_as_pdf"):
                 page.emulate_media(media="print")
@@ -227,6 +231,7 @@ class ChromeBrowserManager:
                     format=page_format,
                     landscape=is_landscape,
                     print_background=True,
+                    scale=scale,
                 )
             logger.info("PDF saved successfully")
         except Error as exc:
