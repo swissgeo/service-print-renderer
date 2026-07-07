@@ -1,0 +1,29 @@
+version: 1
+disable_existing_loggers: False # this allow to get logger at module level
+
+root:
+  handlers:
+    - console
+    - otel
+  level: DEBUG
+  propagate: True
+
+loggers:
+  botocore:
+    level: INFO
+  boto3:
+    level: INFO
+
+formatters:
+  standard:
+    format: "[%(asctime)s] %(levelname)-8s - %(name)-26s : %(message)s"
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: standard
+    stream: ext://sys.stdout
+  # Exports log records to the OTLP collector (LoggerProvider); trace context is
+  # attached natively. Requires setup_logger_provider() with OTEL_ENABLE_OTLP_EXPORTER=true.
+  otel:
+    (): app.helpers.otel.get_otel_handler

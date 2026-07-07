@@ -1,0 +1,104 @@
+services:
+  moto-server:
+    image: motoserver/moto
+    container_name: moto-server
+    ports:
+      - "${MOTO_PORT:-5000}:5000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - network_local
+
+  init-dynamo:
+    image: amazon/aws-cli
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until aws dynamodb list-tables --endpoint-url http://moto-server:5000 >/dev/null 2>&1; do
+          echo "Waiting for moto-server..."; sleep 2
+        done
+        aws dynamodb create-table \
+          --table-name ${DYNAMODB_TABLE_NAME} \
+          --attribute-definitions AttributeName=job_id,AttributeType=S \
+          --key-schema AttributeName=job_id,KeyType=HASH \
+          --provisioned-throughput ReadCapacityUnits=2,WriteCapacityUnits=1 \
+          --endpoint-url http://moto-server:5000 || true
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+    networks:
+      - network_local
+
+  init-sqs:
+    image: amazon/aws-cli
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until aws sqs list-queues --endpoint-url http://moto-server:5000 >/dev/null 2>&1; do
+          echo "Waiting for moto-server..."; sleep 2
+        done
+        aws sqs create-queue --queue-name ${SQS_DL_QUEUE_NAME} --endpoint-url http://moto-server:5000
+        DLQ_URL=$$(aws sqs get-queue-url --queue-name ${SQS_DL_QUEUE_NAME} --endpoint-url http://moto-server:5000 --query 'QueueUrl' --output text)
+        DLQ_ARN=$$(aws sqs get-queue-attributes --queue-url $$DLQ_URL --endpoint-url http://moto-server:5000 --attribute-names QueueArn --query 'Attributes.QueueArn' --output text)
+        REDRIVE=$$(printf '{"deadLetterTargetArn":"%s","maxReceiveCount":"%s"}' "$$DLQ_ARN" "${SQS_MAX_RECEIVE_COUNT}")
+        ESCAPED=$$(echo "$$REDRIVE" | sed 's/"/\\"/g')
+        aws sqs create-queue \
+          --queue-name ${SQS_QUEUE_NAME} \
+          --endpoint-url http://moto-server:5000 \
+          --attributes "{\"RedrivePolicy\":\"$$ESCAPED\",\"VisibilityTimeout\":\"${SQS_VISIBILITY_TIMEOUT}\"}"
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - SQS_MAX_RECEIVE_COUNT=${SQS_MAX_RECEIVE_COUNT}
+      - SQS_VISIBILITY_TIMEOUT=${SQS_VISIBILITY_TIMEOUT}
+    networks:
+      - network_local
+
+  init-s3:
+    image: amazon/aws-cli
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until aws s3api list-buckets --endpoint-url http://moto-server:5000 >/dev/null 2>&1; do
+          echo "Waiting for moto-server..."; sleep 2
+        done
+        aws s3api create-bucket \
+          --bucket ${S3_BUCKET_NAME} \
+          --endpoint-url http://moto-server:5000 \
+          --create-bucket-configuration LocationConstraint=${AWS_REGION} || true
+        aws s3api put-bucket-policy \
+          --bucket ${S3_BUCKET_NAME} \
+          --endpoint-url http://moto-server:5000 \
+          --policy '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::${S3_BUCKET_NAME}/*"}]}'
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+    networks:
+      - network_local
+  renderer-info:
+    profiles: [renderer-info]
+    build:
+      context: .
+      target: production
+    command: ["-m", "app.worker", "--renderer-info"]
+    env_file: ${ENV_FILE:-.env}
+    environment:
+      - WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
+    volumes:
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/${WAYLAND_DISPLAY:-wayland-0}:/run/user/1000/${WAYLAND_DISPLAY:-wayland-0}
+    devices:
+      - /dev/nvidia0:/dev/nvidia0
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-modeset:/dev/nvidia-modeset
+      - /dev/dri:/dev/dri
+
+networks:
+  network_local:
+    external: true
+    name: shared_network_local
