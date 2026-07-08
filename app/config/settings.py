@@ -76,4 +76,42 @@ BROWSER_LAUNCH_ARGS: list[str] = [
     "--enable-webgl",
     "--no-sandbox",  # covers GPU sandbox too; --disable-gpu-sandbox is redundant
     "--disable-dev-shm-usage",  # prevents Chrome from crashing on limited /dev/shm in Docker
+    #
+    # --- Prevent Chrome from calling home  ---
+    # See chrome-flags-for-tools.md#background-networking.
+    #
+    # (1) Stop the recurring background features from even trying.
+    "--disable-background-networking",  # extension/safebrowsing/upgrade/translate/UMA fetches
+    "--disable-component-update",  # no chrome://components downloads
+    "--disable-domain-reliability",  # no reliability beacons to Google
+    "--disable-sync",  # no Google-account sync
+    "--disable-breakpad",  # no crash-dump generation...
+    "--disable-crash-reporter",  # ...and no upload of crashes to Google
+    "--disable-client-side-phishing-detection",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--no-pings",  # no hyperlink-auditing pings
+    "--metrics-recording-only",  # record UMA but never upload
+    # Force everything onto TCP: no QUIC/HTTP-3 UDP/443 sockets, so the only UDP
+    # left is DNS to the cluster resolver and all egress is covered by the
+    # hostname sinkhole below (which applies pre-transport, TCP and QUIC alike).
+    "--disable-quic",
+    # Exactly ONE --disable-features flag (Chrome honors only the last occurrence).
+    # DnsOverHttps is disabled so DoH can't open its own egress to a resolver.
+    "--disable-features="
+    "AutofillServerCommunication,"
+    "MediaRouter,"
+    "DialMediaRouteProvider,"
+    "OptimizationHints,"
+    "Translate,"
+    "InterestFeedContentSuggestions,"
+    "DnsOverHttps",
+    # (2) Sinkhole the residual startup phone-home lookups to loopback so the
+    # packet never leaves the pod and the CNI logs nothing. A real portal render
+    # was verified to use NO Google-owned hosts (no fonts/gstatic), so wildcarding
+    # the Google families is safe. If the portal ever adds a Google-hosted asset
+    # (e.g. fonts.googleapis.com), append ",EXCLUDE <that-host>" to un-sinkhole it.
+    # Observed phone-home hosts: accounts / android.clients / clients2 / mtalk /
+    # www .google.com and safebrowsingohttpgateway.googleapis.com.
+    "--host-resolver-rules=MAP *.google.com 127.0.0.1,MAP *.googleapis.com 127.0.0.1",
 ]
