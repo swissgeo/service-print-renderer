@@ -13,11 +13,7 @@ from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import (
-    BatchSpanProcessor,
-    ConsoleSpanExporter,
-    SpanExporter,
-)
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SpanExporter
 from opentelemetry.trace import SpanKind
 
 from app.helpers.utils import init_logging, strtobool
@@ -36,7 +32,7 @@ def traced(span_name: str, kind: SpanKind = SpanKind.INTERNAL) -> Callable:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             tracer = trace.get_tracer(func.__module__)
-            with tracer.start_as_current_span(span_name, kind=kind):
+            with tracer.start_as_current_span(span_name, kind=kind, record_exception=False):
                 return func(*args, **kwargs)
 
         return wrapper
