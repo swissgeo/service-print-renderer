@@ -50,6 +50,8 @@ def test_receive_messages_requests_receive_count_attribute(mock_sqs_client):
 
     call_kwargs = mock_sqs_client.receive_message.call_args[1]
     assert "ApproximateReceiveCount" in call_kwargs.get("AttributeNames", [])
+    # SentTimestamp is needed to derive the queue waiting-time metric.
+    assert "SentTimestamp" in call_kwargs.get("AttributeNames", [])
 
 
 def test_receive_messages_propagates_connect_timeout(mock_sqs_client):

@@ -8,10 +8,12 @@ Entry point: python -m app.worker
 """
 
 import argparse
+import datetime
 import logging
 import signal
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from opentelemetry import trace
@@ -27,6 +29,15 @@ from app.config.settings import (
 )
 from app.helpers.dynamo_db import get_print_job, update_job_status
 from app.helpers.gpu_info import log_gpu_info
+from app.helpers.metrics import (
+    record_job_dropped,
+    record_job_failed,
+    record_job_started,
+    record_job_succeeded,
+    record_print_duration,
+    record_processing_duration,
+    record_waiting_time,
+)
 from app.helpers.otel import initialize_otel, shutdown_otel, traced
 from app.helpers.printing import ChromeBrowserManager, RenderingError
 from app.helpers.s3 import upload_pdf
@@ -81,10 +92,41 @@ def process_job(job: dict, browser: ChromeBrowserManager) -> str:
         return upload_pdf(job_id, pdf_path)
 
 
+def _waiting_time_seconds(sent_timestamp: str | None) -> float | None:
+    """Queue waiting time from the SQS SentTimestamp (epoch milliseconds).
+
+    Returns None when the timestamp is absent or unparseable so the caller can
+    skip recording the metric rather than emit a bogus value.
+    """
+    if not sent_timestamp:
+        return None
+    try:
+        sent_epoch_s = int(sent_timestamp) / 1000
+    except TypeError, ValueError:
+        return None
+    return max(0.0, time.time() - sent_epoch_s)
+
+
+def _print_duration_seconds(job: dict) -> float | None:
+    """End-to-end duration from the job's created timestamp to now.
+
+    service-print-api stores ``created_timestamp_iso_8601`` on the job and sends
+    it through SQS, so it is available here without an extra DynamoDB read.
+    Returns None when it is missing or unparseable.
+    """
+    created_iso = job.get("created_timestamp_iso_8601")
+    if not created_iso:
+        return None
+    try:
+        created = datetime.datetime.fromisoformat(created_iso)
+    except TypeError, ValueError:
+        logger.debug("Job %s has unparseable created timestamp %r", job.get("job_id"), created_iso)
+        return None
+    return (datetime.datetime.now(datetime.UTC) - created).total_seconds()
+
+
 @traced("worker.handle_message", kind=SpanKind.CONSUMER)
-def handle_message(
-    job_id: str, receipt_handle: str, job: dict, receive_count: int, browser: ChromeBrowserManager
-) -> None:
+def handle_message(job_id: str, job: dict, message: dict, browser: ChromeBrowserManager) -> None:
     """
     Handle a single SQS message end-to-end: render the job, update its final
     status in DynamoDB and delete the message from the queue on success.
@@ -92,8 +134,23 @@ def handle_message(
     maxReceiveCount is reached, then move it to the DLQ automatically.
     DynamoDB is only updated to 'error' on the final attempt.
     """
+    attributes = message.get("Attributes", {})
+    receipt_handle: str = message["ReceiptHandle"]
+    receive_count = int(attributes.get("ApproximateReceiveCount", 1))
+    sent_timestamp: str | None = attributes.get("SentTimestamp")
+
     trace.get_current_span().set_attribute("job.id", job_id)
     trace.get_current_span().set_attribute("messaging.receive_count", receive_count)
+
+    # Count the job as started and record its queue wait once, on first pickup,
+    # so redeliveries don't inflate the counter or double-count the wait time.
+    if receive_count <= 1:
+        record_job_started()
+        waiting_time = _waiting_time_seconds(sent_timestamp)
+        if waiting_time is not None:
+            record_waiting_time(waiting_time)
+
+    processing_start = time.monotonic()
     try:
         pdf_location = process_job(job, browser)
         # The PDF lives at a deterministic key ({prefix}/{job_id}.pdf), so we only
@@ -106,6 +163,12 @@ def handle_message(
         )
         delete_message(receipt_handle, get_queue_url())
         logger.info("Job %s completed successfully (pdf uploaded to %s)", job_id, pdf_location)
+
+        record_job_succeeded()
+        record_processing_duration(time.monotonic() - processing_start)
+        print_duration = _print_duration_seconds(job)
+        if print_duration is not None:
+            record_print_duration(print_duration)
     except (RenderingError, KeyError) as exc:
         # Job-level failure: the job itself is bad (unrenderable or malformed
         # payload). Leave the message on the queue so SQS redrives it; only mark
@@ -121,6 +184,7 @@ def handle_message(
                 finished_timestamp_iso_8601=get_iso_8601_timestamp(),
                 message="Internal rendering error",
             )
+            record_job_failed()
             # Do not delete — let the visibility timeout expire so SQS
             # moves the message to the DLQ via the redrive policy.
 
@@ -146,6 +210,7 @@ def handle_dlq_message(job_id: str, receipt_handle: str) -> None:
             finished_timestamp_iso_8601=get_iso_8601_timestamp(),
             message="Job moved to DLQ after max retries",
         )
+        record_job_dropped()
         logger.info("Updated job %s status to error from DLQ", job_id)
     else:
         logger.debug("Job %s already has error status, skipping update", job_id)
@@ -180,9 +245,6 @@ def run() -> None:
                     for message in messages:
                         touch_probe_file(LIVENESS_PROBE_FILE)
                         receipt_handle: str = message["ReceiptHandle"]
-                        receive_count: int = int(
-                            message.get("Attributes", {}).get("ApproximateReceiveCount", 1)
-                        )
                         try:
                             job = parse_message_body(message)
                             job_id: str = job["job_id"]
@@ -194,7 +256,7 @@ def run() -> None:
                             delete_message(receipt_handle, get_queue_url())
                             continue
 
-                        handle_message(job_id, receipt_handle, job, receive_count, browser)
+                        handle_message(job_id, job, message, browser)
                         jobs_processed += 1
 
                 # Process DLQ messages. As with the main queue, receive_messages
@@ -237,7 +299,7 @@ if __name__ == "__main__":
         log_gpu_info()
         sys.exit(0)
 
-    trace_provider, logger_provider = initialize_otel()
+    trace_provider, logger_provider, meter_provider = initialize_otel()
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -248,4 +310,4 @@ if __name__ == "__main__":
         logger.exception("Unhandled exception in worker")
         sys.exit(1)
     finally:
-        shutdown_otel(trace_provider, logger_provider)
+        shutdown_otel(trace_provider, logger_provider, meter_provider)
