@@ -24,8 +24,9 @@ metric can answer the question. Request volume and status splits for `POST /jobs
 `http.server.duration` already carries `http.route` and `http.response.status_code`. The ADD
 names "get print status" explicitly as a case the default covers.
 
-**Attributes, not names.** One `jobs` counter with an `outcome` attribute, rather than four
-counters. Adding a new outcome does not add a new metric name.
+**Attributes, not names.** One `jobs` counter with an `outcome` attribute, rather than one counter
+per outcome. Adding a new outcome does not add a new metric name — `created` was added to the API
+this way, without a new instrument.
 
 **No unit tests for metric emission.** This follows the convention in the reference service
 `service-portal-state`. The instrumented code paths are exercised by the existing endpoint and
@@ -54,9 +55,14 @@ Mapping of every metric requested in GPS-694 to what now exists.
 | 10 | Job waiting time (in queue) | ✅ | **Custom** | `swissgeo.service_print.job.wait.duration` | renderer |
 | 11 | Print duration | ✅ | **Custom** | `swissgeo.service_print.print.duration` | renderer |
 
+Beyond the ticket, the API also emits `swissgeo.service_print.jobs` `{outcome="created"}` — a job
+accepted and enqueued. It closes the lifecycle at the front: every job now counts once at creation
+and once at pickup, so the two can be compared as rates.
+
 Note on #1: *"started print"* has two readings. The custom counter measures a job the **renderer**
 began processing. If you mean *"a print was requested"* (`POST /jobs` volume), that is **Default** —
 `http.server.duration` on route `/jobs`, where `202` = newly queued and `200` = deduplicated.
+Neither is the same as `created`, which counts only enqueued jobs (no dedup hits, no rejections).
 
 Note on #8: our `dropped` counter fires when a job reaches the DLQ after `SQS_MAX_RECEIVE_COUNT`
 retries. **If GPS-660 means a specifically time-based expiry, this is a different condition** and
@@ -64,16 +70,30 @@ the counter may need adjusting. Unverified against that ticket.
 
 ### The 5 custom instruments
 
+(Six definitions, five names — `jobs` is defined in both repos, see below.)
+
 | Instrument | Type | Unit | Attributes | `scope.name` | Repo |
 | --- | --- | --- | --- | --- | --- |
 | `swissgeo.service_print.jobs` | Counter | `{job}` | `outcome` = `started` \| `success` \| `error` \| `dropped` | `app.helpers.metrics` | renderer |
+| `swissgeo.service_print.jobs` | Counter | `{job}` | `outcome` = `created` | `app.core.metrics` | api |
 | `swissgeo.service_print.job.processing.duration` | Histogram | `s` | – | `app.helpers.metrics` | renderer |
 | `swissgeo.service_print.job.wait.duration` | Histogram | `s` | – | `app.helpers.metrics` | renderer |
 | `swissgeo.service_print.print.duration` | Histogram | `s` | – | `app.helpers.metrics` | renderer |
 | `swissgeo.service_print.queue.depth` | Gauge | `{message}` | – | `app.core.metrics` | api |
 
+The `jobs` counter is the one instrument defined in **both** scopes: the API owns `created`, the
+renderer owns the rest. OTEL permits this — the two are distinct streams that Prometheus merges
+into one series family, told apart by `otel_scope_name`. Name, unit and description must stay
+byte-identical across the two definitions, or Prometheus sees conflicting `HELP` text for a single
+series. `sum by (outcome) (…)` drops the scope label and reunites them.
+
 ### Semantics worth knowing
 
+- **`created`** is recorded by the API after `send_to_queue` succeeds, so it counts jobs the
+  renderer will actually see. It skips the deduplicated re-request (HTTP 200, an existing job),
+  the overload rejection (503) and a failed enqueue — none of which produce a new job. It is
+  therefore *not* the same as `POST /jobs` request volume, which the default
+  `http.server.duration` already gives you.
 - **`started`** and **`job.wait.duration`** are recorded **once, on first pickup**
   (`receive_count <= 1`), so SQS redeliveries do not double-count.
 - **`error`** is recorded only on the **final** failed attempt, when the job is marked `error` in
@@ -101,7 +121,7 @@ discussion.
 
 | OTEL instrument name | Prometheus series | Attributes (allowed values) |
 | --- | --- | --- |
-| `swissgeo.service_print.jobs` | `swissgeo_service_print_jobs_total` | `outcome` = `started` \| `success` \| `error` \| `dropped` |
+| `swissgeo.service_print.jobs` | `swissgeo_service_print_jobs_total` | `outcome` = `created` \| `started` \| `success` \| `error` \| `dropped` |
 | `swissgeo.service_print.job.processing.duration` | `swissgeo_service_print_job_processing_duration_seconds_bucket` / `_count` / `_sum` | – |
 | `swissgeo.service_print.job.wait.duration` | `swissgeo_service_print_job_wait_duration_seconds_bucket` / `_count` / `_sum` | – |
 | `swissgeo.service_print.print.duration` | `swissgeo_service_print_print_duration_seconds_bucket` / `_count` / `_sum` | – |
@@ -193,15 +213,17 @@ Both branches are `feat-GPS-694-otel-metrics`.
 
 | File | Change |
 | --- | --- |
-| `app/core/metrics.py` | **new** — the `queue.depth` gauge + `METRICS_SCHEMA_VERSION` |
+| `app/core/metrics.py` | **new** — the `queue.depth` gauge, the `jobs` counter (`created` only) + `METRICS_SCHEMA_VERSION` |
 | `app/core/sqs_queue.py` | record queue depth inside `is_queue_overloaded` |
+| `app/api/jobs.py` | `record_job_created()` after a successful `send_to_queue` |
 | `app/settings.py` | `otel_enable_metrics` default flipped `False` → **`True`** |
 | `docker-compose-otel.yml`, `otel-local-config.yaml`, `prometheus.yml`, `Makefile` | local Prometheus |
 | `README.md` | metrics table + example PromQL |
 
 The metrics SDK was already wired in the API's `app/otel.py` before this branch; only the
-instrument and the default flip were needed. `app/api/jobs.py` is **unchanged** — the request
-counters that briefly existed there were removed under the default-first rule.
+instruments and the default flip were needed. The single line in `app/api/jobs.py` records
+`created` and nothing else — the *request* counters that briefly lived there were removed under
+the default-first rule, since `http.server.duration` already answers request volume.
 
 ---
 
@@ -274,6 +296,11 @@ More examples in each repo's `README.md` (§ Observability → Metrics → Examp
   (via a `View`) rather than guessing now.
 - **`queue.depth` goes stale without `POST /jobs` traffic.** CloudWatch remains the continuous
   source of truth for queue length.
+- **`created − started` is not the queue backlog**, however much it looks like one. The two are
+  per-process cumulative counters that reset independently when the API and the renderer restart,
+  and `increase()` extrapolates at window edges — the difference drifts and can go negative.
+  Compare them as *rates* to answer "is the renderer keeping up"; read the backlog itself off
+  `queue.depth` or CloudWatch.
 - **`OTEL_METRIC_EXPORT_INTERVAL` / `_TIMEOUT` are read straight from `os.environ` by the OTEL
   SDK**, not through `settings.py`. In the renderer, `load_dotenv()` puts `.env` into the
   environment. In the API, Pydantic's `env_file=` does **not** — the `Makefile`'s

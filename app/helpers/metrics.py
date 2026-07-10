@@ -15,14 +15,16 @@ from opentelemetry import metrics
 METRICS_SCHEMA_VERSION = "1.0.0"
 meter = metrics.get_meter(__name__, METRICS_SCHEMA_VERSION)
 
-# One counter with an ``outcome`` attribute rather than four separate counters:
+# One counter with an ``outcome`` attribute rather than five separate counters:
 # keeps the job lifecycle events queryable together and low-cardinality. The
 # ``started - success - error - dropped`` difference approximates in-flight jobs.
-# Outcomes: "started", "success", "error", "dropped".
+# Outcomes: "started", "success", "error", "dropped" here; "created" is emitted by
+# service-print-api (scope app.core.metrics) under this same instrument name, so
+# name, unit and description must stay identical across the two scopes.
 _jobs = meter.create_counter(
     "swissgeo.service_print.jobs",
     unit="{job}",
-    description="Print jobs handled by the renderer, labelled by outcome",
+    description="Print jobs, labelled by lifecycle outcome",
 )
 
 _processing_duration = meter.create_histogram(

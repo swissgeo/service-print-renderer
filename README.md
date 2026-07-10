@@ -190,7 +190,7 @@ worker and `service-print-api` are two processes of it), so instruments live und
 
 | Metric | Type | Unit | Attributes | Description |
 | --- | --- | --- | --- | --- |
-| `swissgeo.service_print.jobs` | Counter | `{job}` | `outcome` = `started` \| `success` \| `error` \| `dropped` | Print jobs handled by the renderer. `started` is counted once on first pickup; `dropped` when a job reaches the DLQ after max retries (GPS-660) |
+| `swissgeo.service_print.jobs` | Counter | `{job}` | `outcome` = `started` \| `success` \| `error` \| `dropped` | Print jobs handled by the renderer. `started` is counted once on first pickup; `dropped` when a job reaches the DLQ after max retries (GPS-660). `service-print-api` emits a fifth outcome, `created`, under this same instrument name |
 | `swissgeo.service_print.job.processing.duration` | Histogram | `s` | - | Render + upload time, excluding queue wait |
 | `swissgeo.service_print.job.wait.duration` | Histogram | `s` | - | Time a job waited in the SQS queue before first pickup |
 | `swissgeo.service_print.print.duration` | Histogram | `s` | - | End-to-end time from print request creation to job completion |
