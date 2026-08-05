@@ -202,11 +202,12 @@ Both branches are `feat-GPS-694-otel-metrics`.
 | File | Change |
 | --- | --- |
 | `app/helpers/metrics.py` | **new** — the 4 instruments + `record_*` helpers + `METRICS_SCHEMA_VERSION` |
-| `app/helpers/otel.py` | added `_setup_meter_provider()`; `initialize_otel()` now returns a 3-tuple and `shutdown_otel()` flushes the meter provider |
+| `app/helpers/otel.py` | added `_setup_meter_provider()`; `initialize_otel()` now returns a 3-tuple and `shutdown_otel()` flushes the meter provider; `_build_resource()` sets `service.instance.id` (§10) |
 | `app/worker.py` | instrumentation in `handle_message` / `handle_dlq_message`; timing around `process_job` |
 | `app/helpers/sqs_queue.py` | request the `SentTimestamp` attribute in `receive_messages` |
-| `.env.default` | `OTEL_ENABLE_METRICS`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_METRIC_EXPORT_TIMEOUT` |
-| `docker-compose-otel.yml`, `otel-local-config.yaml`, `prometheus.yml`, `Makefile` | local Prometheus |
+| `.env.default` | `OTEL_ENABLE_METRICS`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_METRIC_EXPORT_TIMEOUT`; dead `service.name` in `OTEL_RESOURCE_ATTRIBUTES` commented out |
+| `docker-compose-otel.yml`, `otel-local-config.yaml`, `Makefile` | local Prometheus |
+| `prometheus.yml` | local Prometheus + `otlp.promote_scope_metadata` so `otel_scope_name` exists |
 | `README.md` | metrics table + example PromQL |
 
 ### service-print-api
@@ -216,8 +217,13 @@ Both branches are `feat-GPS-694-otel-metrics`.
 | `app/core/metrics.py` | **new** — the `queue.depth` gauge, the `jobs` counter (`created` only) + `METRICS_SCHEMA_VERSION` |
 | `app/core/sqs_queue.py` | record queue depth inside `is_queue_overloaded` |
 | `app/api/jobs.py` | `record_job_created()` after a successful `send_to_queue` |
+| `app/otel.py` | `_build_resource()` sets `service.instance.id` (§10) |
 | `app/settings.py` | `otel_enable_metrics` default flipped `False` → **`True`** |
-| `docker-compose-otel.yml`, `otel-local-config.yaml`, `prometheus.yml`, `Makefile` | local Prometheus |
+| `.env.default` | dead `service.name` in `OTEL_RESOURCE_ATTRIBUTES` commented out |
+| `pyproject.toml` | ruff per-file-ignores for `test-scripts/**` |
+| `test-scripts/generate_load.py` | **new** — drives POST/GET traffic locally to exercise the metrics |
+| `docker-compose-otel.yml`, `otel-local-config.yaml`, `Makefile` | local Prometheus |
+| `prometheus.yml` | local Prometheus + `otlp.promote_scope_metadata` so `otel_scope_name` exists |
 | `README.md` | metrics table + example PromQL |
 
 The metrics SDK was already wired in the API's `app/otel.py` before this branch; only the
@@ -294,8 +300,20 @@ More examples in each repo's `README.md` (§ Observability → Metrics → Examp
   the first bucket. `_count`, `_sum` and `max` are trustworthy; **`job.wait.duration` percentiles
   are not** until the buckets are tuned. Do not build an SLO on them yet. Tune with real data
   (via a `View`) rather than guessing now.
+- **`otel_scope_name` only exists if Prometheus is told to keep it.** Its OTLP receiver drops the
+  instrumentation scope by default; `prometheus.yml` now sets `otlp.promote_scope_metadata: true`.
+  Without it there is no scope label at all, and since both processes share `job="service-print"`
+  *and* define `swissgeo.service_print.jobs`, nothing distinguishes the API's `created` from the
+  renderer's outcomes. Whatever runs Prometheus in the deployed environments needs the same
+  setting, or the two collapse. Note that turning it on **changes the label set**, so it starts
+  new series: old and new coexist until the old ones age out of the lookback window.
 - **`queue.depth` goes stale without `POST /jobs` traffic.** CloudWatch remains the continuous
   source of truth for queue length.
+- **`instance` comes from the hostname, not from the SDK.** Both services set
+  `service.instance.id` explicitly (§10), because the SDK either omits it (renderer, 1.39) or
+  invents a fresh UUID per process start (api, 1.43) — the latter minting a new series on every
+  deploy. Do not remove that code on an SDK bump, and do not run either process with forked
+  workers without adding the pid: replicas sharing a label set corrupt `rate()`.
 - **`created − started` is not the queue backlog**, however much it looks like one. The two are
   per-process cumulative counters that reset independently when the API and the renderer restart,
   and `increase()` extrapolates at window edges — the difference drifts and can go negative.
@@ -334,6 +352,10 @@ Both are product decisions, not instrumentation gaps.
 4. **Tune histogram buckets** once real production distributions are visible.
 5. Consider whether `queue.depth` should become an **observable gauge** polled on the collection
    interval, rather than sampled on `POST /jobs`.
+6. **Align the renderer's `opentelemetry-sdk` with the API's** (1.39.1 → 1.43.0). Now optional:
+   §10 removed the correctness reason for it. It needs `opentelemetry-instrumentation-botocore`
+   to go `0.60b1` → `0.64b0` (the pin that actually holds the core back), which spans four
+   instrumentation releases and may shift botocore's span attribute names. Own branch, own PR.
 
 ---
 
@@ -344,3 +366,73 @@ Both are product decisions, not instrumentation gaps.
 - Reference implementation: `service-portal-state` — `app/core/metrics.py`, `app/otel.py`.
 - OTEL metric naming: <https://opentelemetry.io/docs/specs/semconv/general/metrics/>
 - Instrumentation scope: <https://opentelemetry.io/docs/concepts/instrumentation-scope/>
+- Resource semantic conventions, `service.instance.id`:
+  <https://opentelemetry.io/docs/specs/semconv/resource/#service>
+
+---
+
+## 10. `service.instance.id`
+
+Both services now set `service.instance.id` themselves, defaulting to the **hostname** — which is
+the pod name under Kubernetes. No manifest change is required. This section records why, since the
+reasoning is not obvious from the two lines of code it produced.
+
+### The problem
+
+Prometheus identifies a time series by its full label set. Every custom metric we emit carries
+`job="service-print"` (from `service.name`) and, since the fix in `prometheus.yml`,
+`otel_scope_name`. Nothing else. Two renderer pods therefore push **the same label set** for
+`swissgeo.service_print.jobs{outcome="success"}`.
+
+That is not a merge. Each pod keeps its own cumulative counter, starting at zero when it starts,
+and both push into one series. Prometheus sees a value that jumps up and down as samples from the
+two processes interleave — and rejects some outright as duplicate or out-of-order. `rate()` over
+that series is meaningless: it reads each downward step as a counter reset. The same applies to
+the histograms' `_count` and `_sum`.
+
+This was latent only because the renderer runs a single pod. The API used to avoid it by accident,
+not design (below).
+
+### Why the SDK's own value is not the answer
+
+`Resource.create()` on `opentelemetry-sdk` 1.43 populates `service.instance.id` with a **random
+UUID generated at process start**; on 1.39, which the renderer pins, it does not. That was the
+entire reason the API's series carried an `instance` label and the renderer's did not — the two
+repos sit four releases apart. Verified against `target_info` in the local stack.
+
+So upgrading the renderer's SDK would have produced an `instance` label, and would have been the
+wrong fix. A fresh UUID per process start means **a new time series on every restart and every
+deploy**, forever. Two `created` series were visible in the local Prometheus at one point,
+differing only by UUID: that was a single API process having restarted once. Over a year of
+deploys, unbounded series growth for a property we can set deliberately and keep bounded.
+
+### What we do instead
+
+`_build_resource()` in [app/helpers/otel.py](app/helpers/otel.py) (and `app/otel.py` in the API)
+sets `service.instance.id` to `socket.gethostname()`. Under Kubernetes the container hostname *is*
+the pod name, so this yields one bounded series per pod, reused across restarts of that pod.
+Counter resets within a pod are then a genuine reset, which `rate()` and `increase()` handle.
+
+Two properties worth keeping if this code is touched:
+
+- **It only fills the gap.** If `OTEL_RESOURCE_ATTRIBUTES` already carries a `service.instance.id`,
+  the fallback stands aside, so a deployment can still name instances explicitly (e.g. via the
+  downward API). Attributes passed to `Resource.create()` *override* the environment rather than
+  merge with it, so this cannot be expressed by passing the hostname unconditionally.
+- **It assumes one process per pod.** True today: the renderer is a single worker loop and the API
+  runs `uvicorn` with no `--workers`. Forked workers would share a hostname and collide with each
+  other; adding `--workers` means adding the pid, or the metrics quietly go wrong again.
+
+It follows that `service.name` cannot be set from the environment either — `otel.py` pins it to
+`service-print` for both processes. `.env.default` in both repos used to set `service.name` inside
+`OTEL_RESOURCE_ATTRIBUTES` (`service-print-renderer` / `service-print-api`); those values **never
+took effect**, and read as though the two processes reported different service names. They are now
+commented out, with the override syntax left as a hint.
+
+### Consequences at rollout
+
+Adding a label **changes the label set**, so the renderer's existing series stop receiving samples
+and new ones begin. Queries that aggregate — `sum by (outcome) (rate(…))`, everything in the
+READMEs — are unaffected. Anything pinned to a bare series will see a discontinuity. There is no
+way to add the label without this; it is a one-time cost, cheaper now, before dashboards exist,
+than after.

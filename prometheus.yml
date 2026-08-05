@@ -7,6 +7,13 @@
 global:
   scrape_interval: 5s
 
+# Without this, the OTLP receiver drops the instrumentation scope and no
+# otel_scope_name label is attached. Both services share job="service-print",
+# and swissgeo.service_print.jobs is defined in both, so the scope label is the
+# only thing that tells the API's instruments from the renderer's.
+otlp:
+  promote_scope_metadata: true
+
 scrape_configs:
   - job_name: prometheus
     static_configs:

@@ -178,7 +178,7 @@ DynamoDB, SQS, and S3 call is also captured as a span.
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP gRPC endpoint of the collector |
 | `OTEL_EXPORTER_OTLP_INSECURE` | `false` | Set to `true` for an insecure (non-TLS) connection. Required for a plaintext local collector |
 | `OTEL_EXPORTER_OTLP_HEADERS` | - | Optional headers for the OTLP collector (e.g. for authentication) |
-| `OTEL_RESOURCE_ATTRIBUTES` | - | Resource attributes attached to all telemetry (e.g. `service.name=service-print`) |
+| `OTEL_RESOURCE_ATTRIBUTES` | - | Extra resource attributes attached to all telemetry. `service.name` is ignored (pinned to `service-print` in code); `service.instance.id` overrides the hostname default |
 
 #### Metrics
 

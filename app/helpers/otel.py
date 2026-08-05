@@ -1,5 +1,6 @@
 import functools
 import logging
+import socket
 from collections.abc import Callable
 from os import getenv
 from typing import Any
@@ -25,7 +26,35 @@ from opentelemetry.trace import SpanKind
 
 from app.helpers.utils import init_logging, strtobool
 
-_RESOURCE = Resource.create({"service.name": "service-print"})
+
+def _build_resource() -> Resource:
+    """Resource shared by all three signals.
+
+    Attributes passed here override OTEL_RESOURCE_ATTRIBUTES, so ``service.name``
+    is fixed: the API and this worker are two processes of one logical service.
+
+    ``service.instance.id`` tells the processes apart, and Prometheus promotes it
+    to the ``instance`` label. Without it every replica writes the same series and
+    ``rate()`` sees their independent counters as one. The SDK only invents a value
+    from 1.43 on, and it is a fresh UUID per start -- a new series on every deploy.
+    The hostname is the pod name under Kubernetes, so it stays stable across
+    restarts of a pod. A deployment can still name the instance explicitly through
+    OTEL_RESOURCE_ATTRIBUTES; only fall back when it does not.
+    """
+    attributes = {"service.name": "service-print"}
+
+    env_keys = {
+        pair.split("=", 1)[0].strip()
+        for pair in getenv("OTEL_RESOURCE_ATTRIBUTES", "").split(",")
+        if "=" in pair
+    }
+    if "service.instance.id" not in env_keys:
+        attributes["service.instance.id"] = socket.gethostname()
+
+    return Resource.create(attributes)
+
+
+_RESOURCE = _build_resource()
 
 # Set by _setup_logger_provider(), read by get_otel_handler() when the logging
 # config resolves the ``otel`` handler. None when OTLP log export is not enabled.
