@@ -42,11 +42,6 @@ class RenderingError(RuntimeError):
 
 _CHROME_EXECUTABLE = "/usr/bin/google-chrome"
 
-# TODO: remove once the web-portal does not take this value as a mandatory parameter.
-# The web-portal currently fails to render without a z= query param, so we send a
-# fixed placeholder zoom as a temporary shim.
-_TEMPORARY_Z = 8
-
 
 @contextlib.contextmanager
 def _timed(label: str) -> Generator:
@@ -114,8 +109,7 @@ class ChromeBrowserManager:
         query carries the ``state`` id and every ``print_*`` payload key
         (except ``print_lang``, which is part of the path). All values are
         forwarded to the web-portal verbatim — no zoom/resolution math happens
-        here. A fixed placeholder ``z`` is also sent as a temporary shim; see
-        ``_TEMPORARY_Z``.
+        here.
         """
         if not PORTAL_URL:
             raise ValueError("PORTAL_URL is not configured — set it in your environment")
@@ -125,8 +119,6 @@ class ChromeBrowserManager:
 
         query_items: list[tuple[str, str]] = [
             ("state", str(payload["state_id"])),
-            # TODO: remove _TEMPORARY_Z once the web-portal reads zoom from print_scale.
-            ("z", str(_TEMPORARY_Z)),
         ]
         query_items += [
             (key, _format_query_value(value))
