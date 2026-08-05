@@ -129,6 +129,36 @@ The service is configured entirely via environment variables:
 | `USE_GPU` | `false` | Set to `true` to use the local machine's GPU (native OpenGL) instead of the SwiftShader software rasterizer. For local development only |
 | `BROWSER_RECYCLE_AFTER_JOBS` | `10` | Restart Chrome after this many jobs to prevent memory accumulation; set to `0` to disable |
 | `BROWSER_NAVIGATION_RETRIES` | `3` | Number of times to retry page navigation on `ERR_NETWORK_CHANGED` before failing the job |
+| `TMP_DIR` | `$TMPDIR` or `/tmp` | Writable scratch directory used for the probe files, the temporary PDF of the job being rendered and the scratch data of Playwright and Chrome (temp profile, artifacts, caches). See [read-only root filesystem](#read-only-root-filesystem) |
+
+### Read-only root filesystem
+
+The container runs as a non-root user and needs no write access to its root
+filesystem, but Chrome, Playwright and the worker itself all need *some* writable
+space. Everything they write goes underneath `TMP_DIR`, so a deployment with
+`readOnlyRootFilesystem: true` only has to mount one writable volume and point
+`TMP_DIR` at it:
+
+```yaml
+securityContext:
+  readOnlyRootFilesystem: true
+env:
+  - name: TMP_DIR
+    value: /scratch
+volumeMounts:
+  - name: scratch
+    mountPath: /scratch
+volumes:
+  - name: scratch
+    emptyDir: {}
+```
+
+Mounting the volume at `/tmp` works just as well and needs no `TMP_DIR`. Note
+that `HOME` stays on the read-only filesystem: `XDG_CONFIG_HOME` and
+`XDG_CACHE_HOME` are pointed at `TMP_DIR` so Chrome does not try to write there.
+
+The worker checks `TMP_DIR` on startup and exits immediately with an explicit
+error if it is not writable.
 
 ### Kubernetes probes
 
@@ -136,8 +166,8 @@ The worker writes probe files to signal its state to Kubernetes:
 
 | Probe | File (default) | Env var | Behaviour |
 | ----- | -------------- | ------- | --------- |
-| Startup | `/tmp/startup_probe` | `STARTUP_PROBE_FILE` | Created once when the worker starts; never removed |
-| Liveness | `/tmp/liveness_probe` | `LIVENESS_PROBE_FILE` | Touched after every polling and every printing cycle |
+| Startup | `$TMP_DIR/startup_probe` | `STARTUP_PROBE_FILE` | Created once when the worker starts; never removed |
+| Liveness | `$TMP_DIR/liveness_probe` | `LIVENESS_PROBE_FILE` | Touched after every polling and every printing cycle |
 
 Configure the Kubernetes probes as `exec` checks:
 

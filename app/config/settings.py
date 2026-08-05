@@ -1,4 +1,6 @@
 import os
+import tempfile
+from pathlib import Path
 
 """
 The Config contains everything needed to run the service. Most entries have a default
@@ -25,9 +27,28 @@ SQS_DL_QUEUE_NAME: str = str(os.environ.get("SQS_DL_QUEUE_NAME", "service-print-
 AWS_CONNECT_TIMEOUT: int = int(os.environ.get("AWS_CONNECT_TIMEOUT", "5"))
 AWS_READ_TIMEOUT: int = int(os.environ.get("AWS_READ_TIMEOUT", "30"))
 
+# Writable scratch directory. With a read-only root filesystem, point it at a
+# mounted writable volume.
+# Resolved without tempfile.gettempdir(), which probes the filesystem and raises at
+# import time when nothing is writable.
+TMP_DIR: str = os.environ.get("TMP_DIR") or os.environ.get("TMPDIR") or "/tmp"  # noqa: S108
+_TMP_PATH = Path(TMP_DIR)
+
+# Playwright and Chrome are child processes, so the environment is the only way to
+# redirect their scratch data (temp profile, artifacts, caches) away from /tmp and
+# $HOME.
+os.environ["TMPDIR"] = TMP_DIR
+os.environ["TMP"] = TMP_DIR
+os.environ["TEMP"] = TMP_DIR
+os.environ.setdefault("XDG_CONFIG_HOME", str(_TMP_PATH / "xdg-config"))
+os.environ.setdefault("XDG_CACHE_HOME", str(_TMP_PATH / "xdg-cache"))
+tempfile.tempdir = TMP_DIR
+
+CHROME_USER_DATA_DIR: str = str(_TMP_PATH / "user_data")
+
 # Kubernetes probe files
-STARTUP_PROBE_FILE: str = os.environ.get("STARTUP_PROBE_FILE", "/tmp/startup_probe")  # noqa: S108
-LIVENESS_PROBE_FILE: str = os.environ.get("LIVENESS_PROBE_FILE", "/tmp/liveness_probe")  # noqa: S108
+STARTUP_PROBE_FILE: str = os.environ.get("STARTUP_PROBE_FILE", str(_TMP_PATH / "startup_probe"))
+LIVENESS_PROBE_FILE: str = os.environ.get("LIVENESS_PROBE_FILE", str(_TMP_PATH / "liveness_probe"))
 
 # SQS polling configuration
 SQS_WAIT_TIME_SECONDS: int = int(os.environ.get("SQS_WAIT_TIME_SECONDS", "20"))

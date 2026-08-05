@@ -4,12 +4,11 @@ import logging
 
 from playwright.sync_api import Error, sync_playwright
 
-from app.config.settings import BROWSER_LAUNCH_ARGS
+from app.config.settings import BROWSER_LAUNCH_ARGS, CHROME_USER_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
 _CHROME_EXECUTABLE = "/usr/bin/google-chrome"
-_CHROME_USER_DATA_DIR = "/tmp/user_data"  # noqa: S108
 
 _GPU_INFO_SCRIPT = """
 [document.createElement('canvas')].map((cc) => {
@@ -45,7 +44,7 @@ def log_gpu_info() -> None:
             channel="chrome",
             args=BROWSER_LAUNCH_ARGS,
             executable_path=_CHROME_EXECUTABLE,
-            user_data_dir=_CHROME_USER_DATA_DIR,
+            user_data_dir=CHROME_USER_DATA_DIR,
         )
         page = browser.new_page()
         gpu_data = page.evaluate(_GPU_INFO_SCRIPT)
