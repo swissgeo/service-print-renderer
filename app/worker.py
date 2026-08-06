@@ -24,6 +24,7 @@ from app.config.settings import (
     SQS_MAX_RECEIVE_COUNT,
     SQS_WAIT_TIME_SECONDS,
     STARTUP_PROBE_FILE,
+    TMP_DIR,
 )
 from app.helpers.dynamo_db import get_print_job, update_job_status
 from app.helpers.gpu_info import log_gpu_info
@@ -37,7 +38,12 @@ from app.helpers.sqs_queue import (
     parse_message_body,
     receive_messages,
 )
-from app.helpers.utils import get_iso_8601_timestamp, init_logging, touch_probe_file
+from app.helpers.utils import (
+    ensure_writable_dir,
+    get_iso_8601_timestamp,
+    init_logging,
+    touch_probe_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +81,7 @@ def process_job(job: dict, browser: ChromeBrowserManager) -> str:
         started_timestamp_iso_8601=get_iso_8601_timestamp(),
     )
 
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".pdf", dir=TMP_DIR, delete=True) as tmp:
         pdf_path = Path(tmp.name)
         browser.render_to_pdf(payload, pdf_path)
         return upload_pdf(job_id, pdf_path)
@@ -157,6 +163,7 @@ def handle_dlq_message(job_id: str, receipt_handle: str) -> None:
 def run() -> None:
     """Main polling loop. Runs until a SIGTERM/SIGINT is received."""
     logger.info("Worker started, polling SQS queue...")
+    ensure_writable_dir(TMP_DIR)
     touch_probe_file(STARTUP_PROBE_FILE)
 
     while not _shutdown:
@@ -234,6 +241,7 @@ if __name__ == "__main__":
 
     if _args.renderer_info:
         init_logging()
+        ensure_writable_dir(TMP_DIR)
         log_gpu_info()
         sys.exit(0)
 
