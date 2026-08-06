@@ -31,7 +31,7 @@ AWS_READ_TIMEOUT: int = int(os.environ.get("AWS_READ_TIMEOUT", "30"))
 # mounted writable volume.
 # Resolved without tempfile.gettempdir(), which probes the filesystem and raises at
 # import time when nothing is writable.
-TMP_DIR: str = os.environ.get("TMP_DIR") or os.environ.get("TMPDIR") or "/tmp"  # noqa: S108
+TMP_DIR: str = os.environ.get("TMP_DIR") or "/tmp"  # noqa: S108
 _TMP_PATH = Path(TMP_DIR)
 
 # Playwright and Chrome are child processes, so the environment is the only way to

@@ -129,7 +129,7 @@ The service is configured entirely via environment variables:
 | `USE_GPU` | `false` | Set to `true` to use the local machine's GPU (native OpenGL) instead of the SwiftShader software rasterizer. For local development only |
 | `BROWSER_RECYCLE_AFTER_JOBS` | `10` | Restart Chrome after this many jobs to prevent memory accumulation; set to `0` to disable |
 | `BROWSER_NAVIGATION_RETRIES` | `3` | Number of times to retry page navigation on `ERR_NETWORK_CHANGED` before failing the job |
-| `TMP_DIR` | `$TMPDIR` or `/tmp` | Writable scratch directory used for the probe files, the temporary PDF of the job being rendered and the scratch data of Playwright and Chrome (temp profile, artifacts, caches). See [read-only root filesystem](#read-only-root-filesystem) |
+| `TMP_DIR` | `/tmp` | Writable scratch directory used for the probe files, the temporary PDF of the job being rendered and the scratch data of Playwright and Chrome (temp profile, artifacts, caches). See [read-only root filesystem](#read-only-root-filesystem) |
 
 ### Read-only root filesystem
 
