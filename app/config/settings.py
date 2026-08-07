@@ -119,14 +119,16 @@ BROWSER_LAUNCH_ARGS: list[str] = [
     "--disable-quic",
     # Exactly ONE --disable-features flag (Chrome honors only the last occurrence).
     # DnsOverHttps is disabled so DoH can't open its own egress to a resolver.
-    "--disable-features="
-    "AutofillServerCommunication,"
-    "MediaRouter,"
-    "DialMediaRouteProvider,"
-    "OptimizationHints,"
-    "Translate,"
-    "InterestFeedContentSuggestions,"
-    "DnsOverHttps",
+    (
+        "--disable-features="
+        "AutofillServerCommunication,"
+        "MediaRouter,"
+        "DialMediaRouteProvider,"
+        "OptimizationHints,"
+        "Translate,"
+        "InterestFeedContentSuggestions,"
+        "DnsOverHttps"
+    ),
     # (2) Sinkhole the residual startup phone-home lookups to loopback so the
     # packet never leaves the pod and the CNI logs nothing. A real portal render
     # was verified to use NO Google-owned hosts (no fonts/gstatic), so wildcarding

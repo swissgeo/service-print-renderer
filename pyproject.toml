@@ -23,7 +23,7 @@ dev = [
     "pytest",
     "pytest-cov",
     "pytest-xdist",
-    "ruff>=0.14",
+    "ruff>=0.16",
     "boto3-stubs[dynamodb,s3,sqs]~=1.42",
 ]
 
@@ -60,6 +60,7 @@ ignore = [
     "ANN002", # Ignore typehint for *args
     "ANN003", # Ignore typehint for **kwargs
     "D",      # Ignore pydocstyle
+    "CPY",    # Ignore flake8-copyright: internal service, not a distributed library
     "EM",     # Ignore flake8-errmsg
     "TRY003", # Ignore long messages in exception constructors
     "FBT001", # Ignore boolean-type-hint-positional-argument
