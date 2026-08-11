@@ -238,10 +238,10 @@ class ChromeBrowserManager:
         try:
             if self._browser:
                 self._browser.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("Error closing browser, ignoring", exc_info=True)
         try:
             if self._playwright:
                 self._playwright.stop()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("Error stopping Playwright, ignoring", exc_info=True)
