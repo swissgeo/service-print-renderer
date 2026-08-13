@@ -15,12 +15,13 @@ from opentelemetry import metrics
 METRICS_SCHEMA_VERSION = "1.0.0"
 meter = metrics.get_meter(__name__, METRICS_SCHEMA_VERSION)
 
-# One counter with an ``outcome`` attribute rather than five separate counters:
-# keeps the job lifecycle events queryable together and low-cardinality. The
-# ``started - success - error - dropped`` difference approximates in-flight jobs.
-# Outcomes: "started", "success", "error", "dropped" here; "created" is emitted by
+# One counter with an ``outcome`` attribute rather than four separate counters:
+# keeps the job lifecycle events queryable together and low-cardinality.
+# Outcomes: "started", "success", "error" here; "created" is emitted by
 # service-print-api (scope app.core.metrics) under this same instrument name, so
 # name, unit and description must stay identical across the two scopes.
+# Queue state (backlog, DLQ arrivals) is deliberately not measured here — it comes
+# from CloudWatch, see METRICS.md §1 and §4.
 _jobs = meter.create_counter(
     "swissgeo.service_print.jobs",
     unit="{job}",
@@ -39,8 +40,8 @@ _wait_duration = meter.create_histogram(
     description="Time a job spent waiting in the SQS queue before first pickup",
 )
 
-_print_duration = meter.create_histogram(
-    "swissgeo.service_print.print.duration",
+_total_duration = meter.create_histogram(
+    "swissgeo.service_print.job.total.duration",
     unit="s",
     description="End-to-end time from print request creation to job completion",
 )
@@ -61,11 +62,6 @@ def record_job_failed() -> None:
     _jobs.add(1, {"outcome": "error"})
 
 
-def record_job_dropped() -> None:
-    """Count a job dropped from the queue into the DLQ after max retries."""
-    _jobs.add(1, {"outcome": "dropped"})
-
-
 def record_processing_duration(seconds: float) -> None:
     """Record the render + upload duration of a successful job, in seconds."""
     _processing_duration.record(seconds)
@@ -76,6 +72,6 @@ def record_waiting_time(seconds: float) -> None:
     _wait_duration.record(seconds)
 
 
-def record_print_duration(seconds: float) -> None:
+def record_total_duration(seconds: float) -> None:
     """Record the request-to-completion duration of a job, in seconds."""
-    _print_duration.record(seconds)
+    _total_duration.record(seconds)

@@ -30,12 +30,11 @@ from app.config.settings import (
 from app.helpers.dynamo_db import get_print_job, update_job_status
 from app.helpers.gpu_info import log_gpu_info
 from app.helpers.metrics import (
-    record_job_dropped,
     record_job_failed,
     record_job_started,
     record_job_succeeded,
-    record_print_duration,
     record_processing_duration,
+    record_total_duration,
     record_waiting_time,
 )
 from app.helpers.otel import initialize_otel, shutdown_otel, traced
@@ -107,7 +106,7 @@ def _waiting_time_seconds(sent_timestamp: str | None) -> float | None:
     return max(0.0, time.time() - sent_epoch_s)
 
 
-def _print_duration_seconds(job: dict) -> float | None:
+def _total_duration_seconds(job: dict) -> float | None:
     """End-to-end duration from the job's created timestamp to now.
 
     service-print-api stores ``created_timestamp_iso_8601`` on the job and sends
@@ -166,9 +165,9 @@ def handle_message(job_id: str, job: dict, message: dict, browser: ChromeBrowser
 
         record_job_succeeded()
         record_processing_duration(time.monotonic() - processing_start)
-        print_duration = _print_duration_seconds(job)
-        if print_duration is not None:
-            record_print_duration(print_duration)
+        total_duration = _total_duration_seconds(job)
+        if total_duration is not None:
+            record_total_duration(total_duration)
     except (RenderingError, KeyError) as exc:
         # Job-level failure: the job itself is bad (unrenderable or malformed
         # payload). Leave the message on the queue so SQS redrives it; only mark
@@ -210,7 +209,6 @@ def handle_dlq_message(job_id: str, receipt_handle: str) -> None:
             finished_timestamp_iso_8601=get_iso_8601_timestamp(),
             message="Job moved to DLQ after max retries",
         )
-        record_job_dropped()
         logger.info("Updated job %s status to error from DLQ", job_id)
     else:
         logger.debug("Job %s already has error status, skipping update", job_id)

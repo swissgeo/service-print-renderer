@@ -190,13 +190,17 @@ worker and `service-print-api` are two processes of it), so instruments live und
 
 | Metric | Type | Unit | Attributes | Description |
 | --- | --- | --- | --- | --- |
-| `swissgeo.service_print.jobs` | Counter | `{job}` | `outcome` = `started` \| `success` \| `error` \| `dropped` | Print jobs handled by the renderer. `started` is counted once on first pickup; `dropped` when a job reaches the DLQ after max retries (GPS-660). `service-print-api` emits a fifth outcome, `created`, under this same instrument name |
+| `swissgeo.service_print.jobs` | Counter | `{job}` | `outcome` = `started` \| `success` \| `error` | Print jobs handled by the renderer. `started` is counted once on first pickup; `error` only on the final failed attempt. `service-print-api` emits a fourth outcome, `created`, under this same instrument name |
 | `swissgeo.service_print.job.processing.duration` | Histogram | `s` | - | Render + upload time, excluding queue wait |
 | `swissgeo.service_print.job.wait.duration` | Histogram | `s` | - | Time a job waited in the SQS queue before first pickup |
-| `swissgeo.service_print.print.duration` | Histogram | `s` | - | End-to-end time from print request creation to job completion |
+| `swissgeo.service_print.job.total.duration` | Histogram | `s` | - | End-to-end time from print request creation to job completion |
 
 Request-volume/latency and status splits are **not** custom metrics — they come from the default
 `http.server.duration` on `service-print-api`.
+
+**Queue state is not measured here.** Backlog and dropped jobs (jobs that reached the DLQ) come
+from the SQS metrics AWS publishes to CloudWatch, not from this worker — see
+[METRICS.md](METRICS.md) §1 for why, and §4 for what is needed to make them available.
 
 ##### Example queries
 
@@ -210,12 +214,12 @@ into `_bucket` / `_count` / `_sum`. Both services share the label `job="service-
 # Throughput by outcome (jobs/s)
 sum by (outcome) (rate(swissgeo_service_print_jobs_total[5m]))
 
-# Errors and queue drops in the last hour
-sum by (outcome) (increase(swissgeo_service_print_jobs_total{outcome=~"error|dropped"}[1h]))
+# Errors in the last hour
+sum(increase(swissgeo_service_print_jobs_total{outcome="error"}[1h]))
 
 # Success rate over completed jobs
   sum(rate(swissgeo_service_print_jobs_total{outcome="success"}[5m]))
-/ sum(rate(swissgeo_service_print_jobs_total{outcome=~"success|error|dropped"}[5m]))
+/ sum(rate(swissgeo_service_print_jobs_total{outcome=~"success|error"}[5m]))
 
 # p95 render + upload time
 histogram_quantile(0.95,
@@ -225,12 +229,9 @@ histogram_quantile(0.95,
   rate(swissgeo_service_print_job_processing_duration_seconds_sum[5m])
 / rate(swissgeo_service_print_job_processing_duration_seconds_count[5m])
 
-# p95 end-to-end print duration (request -> job finished)
+# p95 end-to-end duration (request -> job finished)
 histogram_quantile(0.95,
-  sum by (le) (rate(swissgeo_service_print_print_duration_seconds_bucket[5m])))
-
-# Current queue depth (emitted by service-print-api)
-swissgeo_service_print_queue_depth
+  sum by (le) (rate(swissgeo_service_print_job_total_duration_seconds_bucket[5m])))
 
 # Request volume for GET /jobs/{job_id}, from the default HTTP metric
 sum(rate(http_server_duration_seconds_count{http_route="/jobs/{job_id}"}[5m]))
