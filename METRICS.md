@@ -168,6 +168,14 @@ All custom names decompose as `<root>` . `<service>` . `<sub-namespace…>` . `<
   Where one genuinely fits, the ADD's sanctioned form is to take that namespace and prefix it with
   `swissgeo.` — e.g. `swissgeo.messaging.*` for queue semantics. None of our four instruments
   needed this.
+- **The same rule applies to attribute keys, in both directions.** A key we invent must not sit
+  inside a convention's namespace: `handle_message` used to set the span attribute
+  `messaging.receive_count`, which is not a semconv attribute, on a span the botocore
+  instrumentation decorates with real `messaging.*` ones. It is now
+  `swissgeo.messaging.receive_count`. Conversely, a key the convention *does* define is reused
+  **verbatim** — `messaging.system`, `messaging.destination.name` are adopted as-is, never
+  prefixed. The prefix rule is for names we mint; adopting a defined attribute is the point of
+  having conventions.
 
 ### Semantics worth knowing
 
@@ -199,6 +207,9 @@ All custom names decompose as `<root>` . `<service>` . `<sub-namespace…>` . `<
 2. **The `outcome` attribute key.** The ADD permits short keys (`operation`, `outcome`, `format`)
    *"if registered centrally"*, otherwise they should be namespaced (`swissgeo.service_print.outcome`).
    Is `outcome` registered? If two services give it different value sets, we have a clash.
+   The same question applies to the bare `job.id` span attribute set in `worker.py` — it collides
+   with no convention today, so it was left alone when `messaging.receive_count` was fixed, but
+   whichever way the team answers this should decide both.
 3. **How do the infrastructure metrics get named?** *(new — the open question that replaces
    "who owns `queue.depth`")* CloudWatch-sourced series will not arrive as `swissgeo.*`; their
    names depend entirely on the ingestion path chosen by infra. Three options, and this is a
@@ -211,7 +222,11 @@ All custom names decompose as `<root>` . `<service>` . `<sub-namespace…>` . `<
      service-print semantics, and the ADD's rule for a fitting OTEL convention namespace is to
      prefix it with `swissgeo.` rather than reuse it bare. It also stays honest — the queues
      belong to `service-print` today, but nothing about the *metric* does, so a later second
-     consumer needs no rename.
+     consumer needs no rename. It is additionally the only option that comes with **standard
+     dimensions**: CloudWatch's `QueueName` maps to the convention's `messaging.destination.name`,
+     alongside `messaging.system="aws_sqs"` (see §4). Note this aligns the series with the
+     *convention*, not with our own SQS spans — the botocore instrumentation still emits the
+     pre-stabilization attributes (below), so the two do not currently share key names.
    - **Rename on ingest into `swissgeo.service_print.queue.*`.** One consistent namespace on the
      dashboard, at the cost of a mapping that lives in the pipeline config rather than in our
      code — and of a name that claims to be ours while the semantics (and the caveats in §4) are
@@ -271,6 +286,18 @@ stopped — worth alerting on, but a different condition from #4.
   no environment or service dimension. Environment separation therefore comes from the queue naming
   convention being preserved into the target system — preferably mapped to an explicit environment
   label during ingestion rather than parsed out of the queue name in every query.
+- **Dimension names on ingest:** if the pipeline can set attribute keys, use the current OTEL
+  messaging convention rather than passing `QueueName` through — `messaging.destination.name` =
+  the queue name, `messaging.system` = `aws_sqs`. This is a request about *attributes* only; the
+  convention defines no queue metrics to adopt (§9). Do **not** copy the keys off our own SQS
+  spans: `opentelemetry-instrumentation-botocore` is still on the pre-stabilization messaging
+  attributes and disagrees with the convention on both key and value — it emits
+  `messaging.destination` (not `…destination.name`), `messaging.url` (dropped from the
+  convention), a non-standard `aws.queue_url`, and `messaging.system="aws.sqs"` with a dot rather
+  than `aws_sqs`. Only `messaging.message.id` matches. Its source still carries a
+  `# TODO: update when semantic conventions exist`, and this is unchanged in `0.64b0`, so the
+  upgrade in §8 #7 does not fix it. Align the ingest with the convention and accept that the two
+  do not join on the queue name today.
 
 ---
 
@@ -296,9 +323,10 @@ stopped — worth alerting on, but a different condition from #4.
   setting, or the two collapse. Note that turning it on **changes the label set**, so it starts
   new series: old and new coexist until the old ones age out of the lookback window.
 - **`instance` comes from the hostname, not from the SDK.** Both services set
-  `service.instance.id` explicitly (§6), because the SDK either omits it (renderer, 1.39) or
-  invents a fresh UUID per process start (api, 1.43) — the latter minting a new series on every
-  deploy. Do not remove that code on an SDK bump, and do not run either process with forked
+  `service.instance.id` explicitly (§6), because the SDK invents a fresh UUID per process start
+  (1.43; 1.39 omitted it entirely) — minting a new series on every deploy. Now that both repos run
+  1.43 this is the only thing keeping the label bounded. Do not remove that code, and do not run
+  either process with forked
   workers without adding the pid: replicas sharing a label set corrupt `rate()`.
 - **`created − started` is not the queue backlog**, however much it looks like one. The two are
   per-process cumulative counters that reset independently when the API and the renderer restart,
@@ -339,13 +367,14 @@ not design (below).
 ### Why the SDK's own value is not the answer
 
 `Resource.create()` on `opentelemetry-sdk` 1.43 populates `service.instance.id` with a **random
-UUID generated at process start**; on 1.39, which the renderer pins, it does not. That was the
-entire reason the API's series carried an `instance` label and the renderer's did not — the two
-repos sit four releases apart. Verified against `target_info` in the local stack.
+UUID generated at process start**; on 1.39 it does not. That was the entire reason the API's
+series carried an `instance` label and the renderer's did not — the two repos sat four releases
+apart until the bump in §8 #7 closed the gap. Verified against `target_info` in the local stack.
 
 So upgrading the renderer's SDK would have produced an `instance` label, and would have been the
-wrong fix. A fresh UUID per process start means **a new time series on every restart and every
-deploy**, forever. Two `created` series were visible in the local Prometheus at one point,
+wrong fix on its own. A fresh UUID per process start means **a new time series on every restart
+and every deploy**, forever. The renderer now *is* on 1.43, which makes the explicit attribute
+below load-bearing in both services rather than only in the API. Two `created` series were visible in the local Prometheus at one point,
 differing only by UUID: that was a single API process having restarted once. Over a year of
 deploys, unbounded series growth for a property we can set deliberately and keep bounded.
 
@@ -410,10 +439,16 @@ Both are product decisions, not instrumentation gaps.
    GPS-660 means a specifically *time-based* expiry, that is a different condition and needs its
    own signal — most likely `ApproximateAgeOfOldestMessage` with a threshold, not a counter.
 6. **Tune histogram buckets** once real production distributions are visible.
-7. **Align the renderer's `opentelemetry-sdk` with the API's** (1.39.1 → 1.43.0). Optional:
-   §6 removed the correctness reason for it. It needs `opentelemetry-instrumentation-botocore`
-   to go `0.60b1` → `0.64b0` (the pin that actually holds the core back), which spans four
-   instrumentation releases and may shift botocore's span attribute names. Own branch, own PR.
+7. ~~**Align the renderer's `opentelemetry-sdk` with the API's** (1.39.1 → 1.43.0).~~ **Done on
+   this branch.** `opentelemetry-sdk` and `-exporter-otlp` `~=1.39` → `~=1.43`, and
+   `-instrumentation-botocore` `0.60b1` → `0.64b0` (the pin that actually held the core back).
+   The feared span-attribute drift across those four instrumentation releases **did not
+   materialise**: `extensions/sqs.py` is byte-identical apart from its licence header, and the
+   DynamoDB constants only move module (`semconv.trace.SpanAttributes` →
+   `semconv._incubating.attributes`) while keeping their values. `service.instance.id` is also
+   unaffected — 1.43's `Resource.create()` generates a UUID, but the explicit attribute in
+   `_build_resource()` takes precedence, so the hostname still wins (verified on 1.43). Lint,
+   `ty` and all 45 tests pass. Both repos now run the same OTEL versions.
 
 ---
 
@@ -428,6 +463,12 @@ Both are product decisions, not instrumentation gaps.
   <https://opentelemetry.io/docs/specs/semconv/resource/#service>
 - Available CloudWatch metrics for Amazon SQS:
   <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-available-cloudwatch-metrics.html>
-- OTEL messaging semantic conventions (**spans only** — there is no SQS metric convention, which is
-  why #7 and #8 come from CloudWatch rather than from a standard instrument):
+- OTEL SQS semantic conventions — **spans and attributes only, no metrics.** What it does give us
+  is emitted automatically by `BotocoreInstrumentor`; the attribute keys are reused in §4:
   <https://opentelemetry.io/docs/specs/semconv/messaging/sqs/>
+- OTEL messaging *metrics* conventions — four instruments, all explicitly **client-side**
+  (`messaging.client.sent.messages`, `messaging.client.consumed.messages`,
+  `messaging.client.operation.duration`, `messaging.process.duration`). There is **no broker-side
+  convention**: no queue depth, no backlog, no oldest-message age. This is why #7 and #8 come from
+  CloudWatch rather than from a standard instrument:
+  <https://opentelemetry.io/docs/specs/semconv/messaging/messaging-metrics/>
