@@ -139,7 +139,9 @@ def handle_message(job_id: str, job: dict, message: dict, browser: ChromeBrowser
     sent_timestamp: str | None = attributes.get("SentTimestamp")
 
     trace.get_current_span().set_attribute("job.id", job_id)
-    trace.get_current_span().set_attribute("messaging.receive_count", receive_count)
+    # Prefixed: `messaging.*` is a reserved OTEL semconv namespace, already
+    # populated on this span by botocore, and defines no receive-count attribute.
+    trace.get_current_span().set_attribute("swissgeo.messaging.receive_count", receive_count)
 
     # Count the job as started and record its queue wait once, on first pickup,
     # so redeliveries don't inflate the counter or double-count the wait time.
