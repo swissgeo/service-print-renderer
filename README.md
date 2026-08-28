@@ -20,6 +20,7 @@
   - [Kubernetes probes](#kubernetes-probes)
   - [Observability](#observability)
     - [Logging implementation](#logging-implementation)
+    - [Metrics](#metrics)
     - [Local OTEL testing](#local-otel-testing)
 - [Debugging](#debugging)
   - [WebGL renderer info](#webgl-renderer-info)
@@ -194,41 +195,65 @@ test $(( $(date +%s) - $(date +%s -r /tmp/liveness_probe) )) -lt 60 && echo "ali
 
 ### Observability
 
-The worker exports **traces** via OpenTelemetry (OTLP) by default, and can also export
-**logs** via OTLP when the OTEL logging config is used (see
-[Logging implementation](#logging-implementation)); metrics are not implemented yet. With
-`OTEL_ENABLE_BOTOCORE=true`, every DynamoDB, SQS, and S3 call is also captured as a span.
+The worker exports **traces** and **metrics** via OpenTelemetry (OTLP) by default, and can also
+export **logs** via OTLP when the OTEL logging config is used (see
+[Logging implementation](#logging-implementation)). With `OTEL_ENABLE_BOTOCORE=true`, every
+DynamoDB, SQS, and S3 call is also captured as a span. No custom metric instruments are defined
+yet — the pipeline is wired so they can be (see [Metrics](#metrics)).
 
 | Env | Default | Description |
 | --- | ------- | ----------- |
 | `OTEL_SDK_DISABLED` | `false` | Set to `true` to disable all OTEL instrumentation |
+| `OTEL_ENABLE_METRICS` | `true` | Set to `false` to disable OTLP metrics export |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `60000` | Metric export interval in ms (read straight from the env by the OTEL SDK; only relevant when metrics are enabled) |
+| `OTEL_METRIC_EXPORT_TIMEOUT` | `30000` | Metric export timeout in ms (read straight from the env by the OTEL SDK; only relevant when metrics are enabled) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP gRPC endpoint of the collector |
 | `OTEL_EXPORTER_OTLP_INSECURE` | `false` | Set to `true` for an insecure (non-TLS) connection. Required for a plaintext local collector |
 | `OTEL_EXPORTER_OTLP_HEADERS` | - | Optional headers for the OTLP collector (e.g. for authentication) |
-| `OTEL_RESOURCE_ATTRIBUTES` | - | Resource attributes attached to all telemetry (e.g. `service.name=service-print-renderer`) |
+| `OTEL_RESOURCE_ATTRIBUTES` | - | Extra resource attributes attached to all telemetry. `service.name` is ignored (pinned to `service-print` in code, since the API and the renderer are two processes of one logical service) |
 
 #### Logging implementation
 
 When the OTEL logging config (`app/config/logging-cfg-otel.yaml`) is used, logs are exported
 through the OpenTelemetry `LoggerProvider` (the `otel` handler).
 
+#### Metrics
+
+The meter provider is set up in [app/helpers/otel.py](app/helpers/otel.py) and exports via OTLP
+alongside traces and logs. Custom instruments will live in `app/helpers/metrics.py` (scope
+`app.helpers.metrics`); none are defined yet, so today only the SDK's own metrics are emitted.
+
+Locally, `make start-otel` also brings up **Prometheus** (<http://localhost:9090>) so metrics can
+be queried and graphed — the OTLP collector only has a debug (log-dump) exporter otherwise.
+Prometheus does not scrape the worker: the collector *pushes* metrics into Prometheus' native
+OTLP receiver, so instrument names, units and attributes arrive unchanged.
+
+OTEL names are rewritten on the way into Prometheus: `.` becomes `_`, counters gain `_total`, and
+annotation units (e.g. `{message}`) are dropped. Both `service-print` processes share the label
+`job="service-print"` (from `service.name`); `otel_scope_name` is what tells the renderer's
+instruments from the API's.
+
 #### Local OTEL testing
 
-1. Start the local OTEL collector and Jaeger:
+1. Start the local OTEL collector, Jaeger and Prometheus:
 
    ```bash
    make start-otel
    ```
 
-2. Run the worker. Traces export by default; to also export logs via OTLP, point
+2. Run the worker. Traces and metrics export by default; to also export logs via OTLP, point
    `LOGGING_CFG` at the OTEL logging config:
 
    ```bash
    LOGGING_CFG=app/config/logging-cfg-otel.yaml make run
    ```
 
-View the full traces in the Jaeger UI at **<http://localhost:16686>**. Stop the stack with
-`make stop-otel`.
+View the full traces in the Jaeger UI at **<http://localhost:16686>** and metrics in the
+Prometheus UI at **<http://localhost:9090>**. Stop the stack with `make stop-otel`.
+
+> The OTEL stack (collector, Jaeger, Prometheus) is shared with `service-print-api` via the
+> `service-print-local-otel` compose project — the compose file is identical in both repos, so
+> `make start-otel` from either service brings up (or reuses) the same containers.
 
 ## Debugging
 

@@ -1,0 +1,20 @@
+# Local Prometheus config for the shared OTEL stack (make start-otel).
+#
+# Service metrics are not scraped: the OTEL collector pushes them in via
+# Prometheus' OTLP receiver (enabled with --web.enable-otlp-receiver, see
+# docker-compose-otel.yml), fed by the otlphttp/prometheus exporter in
+# otel-local-config.yaml. The only scrape job below is Prometheus itself.
+global:
+  scrape_interval: 5s
+
+# Without this, the OTLP receiver drops the instrumentation scope and no
+# otel_scope_name label is attached. Both services share job="service-print" and
+# both emit semantic-convention instrument names, so the scope label is the only
+# thing that tells the API's instruments from the renderer's.
+otlp:
+  promote_scope_metadata: true
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
