@@ -11,9 +11,9 @@ dependencies = [
     "pyyaml~=6.0",
     "types-pyyaml~=6.0",
     # OpenTelemetry packages
-    "opentelemetry-sdk~=1.39",
-    "opentelemetry-exporter-otlp~=1.39",
-    "opentelemetry-instrumentation-botocore==0.60b1",
+    "opentelemetry-sdk~=1.43",
+    "opentelemetry-exporter-otlp~=1.43",
+    "opentelemetry-instrumentation-botocore==0.64b0",
 ]
 
 [dependency-groups]
