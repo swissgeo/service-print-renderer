@@ -200,7 +200,7 @@ test $(( $(date +%s) - $(date +%s -r /tmp/liveness_probe) )) -lt 60 && echo "ali
 The worker exports **traces** and **metrics** via OpenTelemetry (OTLP) by default, and can also
 export **logs** via OTLP when the OTEL logging config is used (see
 [Logging implementation](#logging-implementation)). With `OTEL_ENABLE_BOTOCORE=true`, every
-DynamoDB, SQS, and S3 call is also captured as a span. The service's one custom metric is
+DynamoDB, SQS, and S3 call is also captured as a span. The service's custom metrics are
 described under [Metrics](#metrics).
 
 | Env | Default | Description |
@@ -230,20 +230,27 @@ are defined in [app/helpers/metrics.py](app/helpers/metrics.py) (`scope.name = a
 | Metric | Type | Unit | Attributes | Description |
 | --- | --- | --- | --- | --- |
 | `messaging.client.consumed.messages` | Counter | `{message}` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs`, `error.type` = `max-retries-exceeded` (permanent failures only) | Print jobs the renderer finished with. One message is one print job |
+| `messaging.process.duration` | Histogram | `s` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs`, `error.type` = `failed` (failed attempts only) | Time the renderer spent processing one message (render + upload). Excludes the queue wait |
 
-Name, unit and description are not written out as literals. They come from
+Name, unit and description are not written out as literals — they come from
 `opentelemetry-semantic-conventions`, so a spec update propagates on the next dependency bump.
 `messaging.operation.name` is the *domain* operation (`print`), not the SQS API call.
 
-The counter is recorded **once per job, at its terminal outcome**: a successful render, or a
-permanent failure once the SQS redrive policy is exhausted (`ApproximateReceiveCount` reaches
-`SQS_MAX_RECEIVE_COUNT`), the latter carrying `error.type`. Redeliveries in between are not
-counted, so the series without `error.type` is exactly the jobs that rendered successfully.
-Jobs that only ever hit infrastructure errors crash the worker and are redriven to the DLQ
-without being counted here.
+`messaging.client.consumed.messages` is recorded **once per job, at its terminal outcome**: a
+successful render, or a permanent failure once the SQS redrive policy is exhausted
+(`ApproximateReceiveCount` reaches `SQS_MAX_RECEIVE_COUNT`), the latter carrying `error.type`.
+Redeliveries in between are not counted, so the series without `error.type` is exactly the jobs
+that rendered successfully. Jobs that only ever hit infrastructure errors crash the worker and
+are redriven to the DLQ without being counted here.
 
 This pairs with the API's `messaging.client.sent.messages`: sent counts enqueue attempts,
 consumed counts jobs picked up and finished, so the two can be compared as rates.
+
+`messaging.process.duration` is measured with `time.monotonic()` around the processing in
+`handle_message` and recorded **once per processing attempt** — a redelivered job adds a sample
+per attempt, so its `_count` is attempts (not distinct jobs) and `_sum` accumulates a job's total
+processing time across retries. A failed attempt carries `error.type = failed`. It measures work
+only; the time a message waited in the queue is a queue property, read from CloudWatch.
 
 ##### Example queries
 
@@ -252,9 +259,11 @@ be queried and graphed — the OTLP collector only has a debug (log-dump) export
 Prometheus does not scrape the worker: the collector *pushes* metrics into Prometheus' native
 OTLP receiver, so instrument names, units and attributes arrive unchanged.
 
-OTEL names are rewritten on the way in: `.` becomes `_`, counters gain `_total`, and annotation
-units (`{message}`) are dropped — so the metric above is `messaging_client_consumed_messages_total`.
-Both `service-print` processes share the label `job="service-print"` (from `service.name`);
+OTEL names are rewritten on the way in: `.` becomes `_`, counters gain `_total`, histograms are
+split into `_bucket` / `_count` / `_sum`, and annotation units (`{message}`) are dropped while
+`s` becomes a `_seconds` suffix — so the two metrics above are
+`messaging_client_consumed_messages_total` and `messaging_process_duration_seconds_*`. Both
+`service-print` processes share the label `job="service-print"` (from `service.name`);
 `otel_scope_name="app.helpers.metrics"` isolates the renderer's instruments from the API's.
 
 ```promql
@@ -268,6 +277,11 @@ sum(rate(messaging_client_consumed_messages_total{
 # Permanent-failure ratio (jobs that exhausted their SQS retries)
   sum(rate(messaging_client_consumed_messages_total{otel_scope_name="app.helpers.metrics", error_type!=""}[5m]))
 / sum(rate(messaging_client_consumed_messages_total{otel_scope_name="app.helpers.metrics"}[5m]))
+
+# p95 processing time over 5m (render + upload), successful attempts
+histogram_quantile(0.95, sum by (le) (rate(
+  messaging_process_duration_seconds_bucket{
+    otel_scope_name="app.helpers.metrics", error_type=""}[5m])))
 ```
 
 #### Local OTEL testing
