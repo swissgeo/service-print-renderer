@@ -28,6 +28,7 @@ from app.config.settings import (
 )
 from app.helpers.dynamo_db import get_print_job, update_job_status
 from app.helpers.gpu_info import log_gpu_info
+from app.helpers.metrics import MAX_RETRIES_EXCEEDED, record_message_consumed
 from app.helpers.otel import initialize_otel, shutdown_otel, traced
 from app.helpers.printing import ChromeBrowserManager, RenderingError
 from app.helpers.s3 import upload_pdf
@@ -111,6 +112,7 @@ def handle_message(
             finished_timestamp_iso_8601=get_iso_8601_timestamp(),
         )
         delete_message(receipt_handle, get_queue_url())
+        record_message_consumed()
         logger.info("Job %s completed successfully (pdf uploaded to %s)", job_id, pdf_location)
     except (RenderingError, KeyError) as exc:
         # Job-level failure: the job itself is bad (unrenderable or malformed
@@ -127,6 +129,7 @@ def handle_message(
                 finished_timestamp_iso_8601=get_iso_8601_timestamp(),
                 message="Internal rendering error",
             )
+            record_message_consumed(error_type=MAX_RETRIES_EXCEEDED)
             # Do not delete — let the visibility timeout expire so SQS
             # moves the message to the DLQ via the redrive policy.
 

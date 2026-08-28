@@ -17,10 +17,12 @@
   - [Run](#run)
   - [Test](#test)
 - [Deployment configuration](#deployment-configuration)
+  - [Read-only root filesystem](#read-only-root-filesystem)
   - [Kubernetes probes](#kubernetes-probes)
   - [Observability](#observability)
     - [Logging implementation](#logging-implementation)
     - [Metrics](#metrics)
+      - [Example queries](#example-queries)
     - [Local OTEL testing](#local-otel-testing)
 - [Debugging](#debugging)
   - [WebGL renderer info](#webgl-renderer-info)
@@ -198,8 +200,8 @@ test $(( $(date +%s) - $(date +%s -r /tmp/liveness_probe) )) -lt 60 && echo "ali
 The worker exports **traces** and **metrics** via OpenTelemetry (OTLP) by default, and can also
 export **logs** via OTLP when the OTEL logging config is used (see
 [Logging implementation](#logging-implementation)). With `OTEL_ENABLE_BOTOCORE=true`, every
-DynamoDB, SQS, and S3 call is also captured as a span. No custom metric instruments are defined
-yet — the pipeline is wired so they can be (see [Metrics](#metrics)).
+DynamoDB, SQS, and S3 call is also captured as a span. The service's one custom metric is
+described under [Metrics](#metrics).
 
 | Env | Default | Description |
 | --- | ------- | ----------- |
@@ -220,18 +222,53 @@ through the OpenTelemetry `LoggerProvider` (the `otel` handler).
 #### Metrics
 
 The meter provider is set up in [app/helpers/otel.py](app/helpers/otel.py) and exports via OTLP
-alongside traces and logs. Custom instruments will live in `app/helpers/metrics.py` (scope
-`app.helpers.metrics`); none are defined yet, so today only the SDK's own metrics are emitted.
+alongside traces and logs. Instruments follow the OpenTelemetry [semantic conventions for
+messaging metrics](https://opentelemetry.io/docs/specs/semconv/messaging/messaging-metrics/) and
+are defined in [app/helpers/metrics.py](app/helpers/metrics.py) (`scope.name = app.helpers.metrics`,
+`scope.version = 1.0.0`). Bump `METRICS_SCHEMA_VERSION` on any schema change.
+
+| Metric | Type | Unit | Attributes | Description |
+| --- | --- | --- | --- | --- |
+| `messaging.client.consumed.messages` | Counter | `{message}` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs`, `error.type` = `max-retries-exceeded` (permanent failures only) | Print jobs the renderer finished with. One message is one print job |
+
+Name, unit and description are not written out as literals. They come from
+`opentelemetry-semantic-conventions`, so a spec update propagates on the next dependency bump.
+`messaging.operation.name` is the *domain* operation (`print`), not the SQS API call.
+
+The counter is recorded **once per job, at its terminal outcome**: a successful render, or a
+permanent failure once the SQS redrive policy is exhausted (`ApproximateReceiveCount` reaches
+`SQS_MAX_RECEIVE_COUNT`), the latter carrying `error.type`. Redeliveries in between are not
+counted, so the series without `error.type` is exactly the jobs that rendered successfully.
+Jobs that only ever hit infrastructure errors crash the worker and are redriven to the DLQ
+without being counted here.
+
+This pairs with the API's `messaging.client.sent.messages`: sent counts enqueue attempts,
+consumed counts jobs picked up and finished, so the two can be compared as rates.
+
+##### Example queries
 
 Locally, `make start-otel` also brings up **Prometheus** (<http://localhost:9090>) so metrics can
 be queried and graphed — the OTLP collector only has a debug (log-dump) exporter otherwise.
 Prometheus does not scrape the worker: the collector *pushes* metrics into Prometheus' native
 OTLP receiver, so instrument names, units and attributes arrive unchanged.
 
-OTEL names are rewritten on the way into Prometheus: `.` becomes `_`, counters gain `_total`, and
-annotation units (e.g. `{message}`) are dropped. Both `service-print` processes share the label
-`job="service-print"` (from `service.name`); `otel_scope_name` is what tells the renderer's
-instruments from the API's.
+OTEL names are rewritten on the way in: `.` becomes `_`, counters gain `_total`, and annotation
+units (`{message}`) are dropped — so the metric above is `messaging_client_consumed_messages_total`.
+Both `service-print` processes share the label `job="service-print"` (from `service.name`);
+`otel_scope_name="app.helpers.metrics"` isolates the renderer's instruments from the API's.
+
+```promql
+# Raw count since the process started -- use this to check a job was counted at all
+messaging_client_consumed_messages_total{otel_scope_name="app.helpers.metrics"}
+
+# Print jobs rendered successfully, per second
+sum(rate(messaging_client_consumed_messages_total{
+  otel_scope_name="app.helpers.metrics", error_type=""}[5m]))
+
+# Permanent-failure ratio (jobs that exhausted their SQS retries)
+  sum(rate(messaging_client_consumed_messages_total{otel_scope_name="app.helpers.metrics", error_type!=""}[5m]))
+/ sum(rate(messaging_client_consumed_messages_total{otel_scope_name="app.helpers.metrics"}[5m]))
+```
 
 #### Local OTEL testing
 
