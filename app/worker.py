@@ -12,6 +12,7 @@ import logging
 import signal
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from opentelemetry import trace
@@ -28,7 +29,12 @@ from app.config.settings import (
 )
 from app.helpers.dynamo_db import get_print_job, update_job_status
 from app.helpers.gpu_info import log_gpu_info
-from app.helpers.metrics import MAX_RETRIES_EXCEEDED, record_message_consumed
+from app.helpers.metrics import (
+    JOB_FAILED,
+    MAX_RETRIES_EXCEEDED,
+    record_message_consumed,
+    record_process_duration,
+)
 from app.helpers.otel import initialize_otel, shutdown_otel, traced
 from app.helpers.printing import ChromeBrowserManager, RenderingError
 from app.helpers.s3 import upload_pdf
@@ -101,6 +107,7 @@ def handle_message(
     """
     trace.get_current_span().set_attribute("job.id", job_id)
     trace.get_current_span().set_attribute("messaging.receive_count", receive_count)
+    start = time.monotonic()
     try:
         pdf_location = process_job(job, browser)
         # The PDF lives at a deterministic key ({prefix}/{job_id}.pdf), so we only
@@ -112,7 +119,9 @@ def handle_message(
             finished_timestamp_iso_8601=get_iso_8601_timestamp(),
         )
         delete_message(receipt_handle, get_queue_url())
+        elapsed = time.monotonic() - start
         record_message_consumed()
+        record_process_duration(elapsed)
         logger.info("Job %s completed successfully (pdf uploaded to %s)", job_id, pdf_location)
     except (RenderingError, KeyError) as exc:
         # Job-level failure: the job itself is bad (unrenderable or malformed
@@ -120,8 +129,10 @@ def handle_message(
         # the job 'error' on the final attempt. Infrastructure errors (AWS
         # ClientError/timeouts, etc.) are deliberately NOT caught here. They
         # propagate and crash the worker so the orchestrator restarts it.
+        elapsed = time.monotonic() - start
         logger.exception("Job %s failed during processing", job_id)
         trace.get_current_span().set_status(StatusCode.ERROR, str(exc))
+        record_process_duration(elapsed, error_type=JOB_FAILED)
         if receive_count >= SQS_MAX_RECEIVE_COUNT:
             update_job_status(
                 job_id,
