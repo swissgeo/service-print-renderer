@@ -245,7 +245,7 @@ if __name__ == "__main__":
         log_gpu_info()
         sys.exit(0)
 
-    trace_provider, logger_provider = initialize_otel()
+    trace_provider, logger_provider, meter_provider = initialize_otel()
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -256,4 +256,4 @@ if __name__ == "__main__":
         logger.exception("Unhandled exception in worker")
         sys.exit(1)
     finally:
-        shutdown_otel(trace_provider, logger_provider)
+        shutdown_otel(trace_provider, logger_provider, meter_provider)
