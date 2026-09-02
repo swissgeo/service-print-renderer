@@ -32,6 +32,7 @@ from app.helpers.gpu_info import log_gpu_info
 from app.helpers.metrics import (
     JOB_FAILED,
     MAX_RETRIES_EXCEEDED,
+    record_job_wait_duration,
     record_message_consumed,
     record_process_duration,
 )
@@ -62,6 +63,22 @@ def _handle_signal(signum: int, _frame: object) -> None:
     global _shutdown  # noqa: PLW0603
     logger.info("Received signal %d, shutting down gracefully...", signum)
     _shutdown = True
+
+
+def _queue_wait_seconds(sent_timestamp: str | None) -> float | None:
+    """Seconds a message sat in the queue, from its SQS ``SentTimestamp`` (epoch ms).
+
+    None when the attribute is absent or non-numeric — a metric sample is not
+    worth crashing the worker. Clamped at 0 to absorb clock skew between the API
+    host and this one.
+    """
+    if sent_timestamp is None:
+        return None
+    try:
+        sent_ms = int(sent_timestamp)
+    except ValueError:
+        return None
+    return max(0.0, time.time() - sent_ms / 1000)
 
 
 @traced("worker.process_job")
@@ -204,6 +221,15 @@ def run() -> None:
                         receive_count: int = int(
                             message.get("Attributes", {}).get("ApproximateReceiveCount", 1)
                         )
+                        # First pickup only: on a redelivery "now - SentTimestamp"
+                        # is the message's age (spanning visibility-timeout cycles),
+                        # not the queue wait we want to measure.
+                        if receive_count <= 1:
+                            record_job_wait_duration(
+                                _queue_wait_seconds(
+                                    message.get("Attributes", {}).get("SentTimestamp")
+                                )
+                            )
                         try:
                             job = parse_message_body(message)
                             job_id: str = job["job_id"]
