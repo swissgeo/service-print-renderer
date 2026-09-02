@@ -29,6 +29,19 @@ JOB_FAILED = "failed"
 _consumed_messages = create_messaging_client_consumed_messages(meter)
 _process_duration = create_messaging_process_duration(meter)
 
+# Emits "swissgeo_service_print_job_wait_duration_seconds_*" in Prometheus.
+# Custom because the messaging semantic conventions have no instrument for a
+# message's queue-wait time: messaging.client.operation.duration measures the
+# receive *call*, not how long the message sat in the queue.
+_job_wait_duration = meter.create_histogram(
+    name="swissgeo.service_print.job.wait.duration",
+    unit="s",
+    description=(
+        "Time a print job spent waiting in the SQS queue, from being enqueued to "
+        "being received by the renderer."
+    ),
+)
+
 # messaging.operation.name names the domain operation, not the SQS API call:
 # one message on this queue is one print job.
 _MESSAGING_ATTRIBUTES = {
@@ -63,3 +76,15 @@ def record_process_duration(seconds: float, error_type: str | None = None) -> No
         attributes = attributes | {error_attributes.ERROR_TYPE: error_type}
 
     _process_duration.record(seconds, attributes)
+
+
+def record_job_wait_duration(seconds: float | None) -> None:
+    """Record how long a print job waited in the queue before its first pickup.
+
+    Recorded once per job, on the first delivery only. ``seconds`` is None when
+    SentTimestamp is missing or unparseable, and nothing is recorded then.
+    """
+    if seconds is None:
+        return
+
+    _job_wait_duration.record(seconds, _MESSAGING_ATTRIBUTES)

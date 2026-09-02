@@ -222,19 +222,24 @@ through the OpenTelemetry `LoggerProvider` (the `otel` handler).
 #### Metrics
 
 The meter provider is set up in [app/helpers/otel.py](app/helpers/otel.py) and exports via OTLP
-alongside traces and logs. Instruments follow the OpenTelemetry [semantic conventions for
-messaging metrics](https://opentelemetry.io/docs/specs/semconv/messaging/messaging-metrics/) and
-are defined in [app/helpers/metrics.py](app/helpers/metrics.py) (`scope.name = app.helpers.metrics`,
-`scope.version = 1.0.0`). Bump `METRICS_SCHEMA_VERSION` on any schema change.
+alongside traces and logs. Instruments are defined in
+[app/helpers/metrics.py](app/helpers/metrics.py) (`scope.name = app.helpers.metrics`,
+`scope.version = 1.0.0`); bump `METRICS_SCHEMA_VERSION` on any schema change. Two follow the
+OpenTelemetry [semantic conventions for messaging
+metrics](https://opentelemetry.io/docs/specs/semconv/messaging/messaging-metrics/); the third is
+custom because the conventions model no queue-wait instrument. All three reuse the convention's
+attribute keys.
 
 | Metric | Type | Unit | Attributes | Description |
 | --- | --- | --- | --- | --- |
 | `messaging.client.consumed.messages` | Counter | `{message}` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs`, `error.type` = `max-retries-exceeded` (permanent failures only) | Print jobs the renderer finished with. One message is one print job |
 | `messaging.process.duration` | Histogram | `s` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs`, `error.type` = `failed` (failed attempts only) | Time the renderer spent processing one message (render + upload). Excludes the queue wait |
+| `swissgeo.service_print.job.wait.duration` | Histogram | `s` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs` | Time a job spent waiting in the SQS queue before its first pickup by the renderer |
 
-Name, unit and description are not written out as literals — they come from
-`opentelemetry-semantic-conventions`, so a spec update propagates on the next dependency bump.
-`messaging.operation.name` is the *domain* operation (`print`), not the SQS API call.
+For the two semantic-convention instruments the name, unit and description are not written out as
+literals — they come from `opentelemetry-semantic-conventions`, so a spec update propagates on the
+next dependency bump. `messaging.operation.name` is the *domain* operation (`print`), not the SQS
+API call.
 
 `messaging.client.consumed.messages` is recorded **once per job, at its terminal outcome**: a
 successful render, or a permanent failure once the SQS redrive policy is exhausted
@@ -249,8 +254,16 @@ consumed counts jobs picked up and finished, so the two can be compared as rates
 `messaging.process.duration` is measured with `time.monotonic()` around the processing in
 `handle_message` and recorded **once per processing attempt** — a redelivered job adds a sample
 per attempt, so its `_count` is attempts (not distinct jobs) and `_sum` accumulates a job's total
-processing time across retries. A failed attempt carries `error.type = failed`. It measures work
-only; the time a message waited in the queue is a queue property, read from CloudWatch.
+processing time across retries. A failed attempt carries `error.type = failed`.
+
+`swissgeo.service_print.job.wait.duration` is custom: the messaging conventions have no instrument
+for a message's queue-wait time (`messaging.client.operation.duration` times the receive *call*,
+not the message's age). It is `now − SentTimestamp` (the SQS system attribute, epoch ms) and
+recorded **once per job, on the first delivery only** (`ApproximateReceiveCount <= 1`). On a
+redelivery that difference is the message's *age* — it spans the visibility-timeout cycles since
+the first receive — not the queue wait, so those are skipped. The value is clamped at 0 to absorb
+clock skew between the two hosts. A CloudWatch `ApproximateAgeOfOldestMessage` alarm still has its
+place — this metric goes quiet exactly when nothing is being consumed.
 
 ##### Example queries
 
@@ -261,13 +274,14 @@ OTLP receiver, so instrument names, units and attributes arrive unchanged.
 
 OTEL names are rewritten on the way in: `.` becomes `_`, counters gain `_total`, histograms are
 split into `_bucket` / `_count` / `_sum`, and annotation units (`{message}`) are dropped while
-`s` becomes a `_seconds` suffix — so the two metrics above are
-`messaging_client_consumed_messages_total` and `messaging_process_duration_seconds_*`. Both
-`service-print` processes share the label `job="service-print"` (from `service.name`);
-`otel_scope_name="app.helpers.metrics"` isolates the renderer's instruments from the API's.
+`s` becomes a `_seconds` suffix. So the metrics above are
+`messaging_client_consumed_messages_total`, `messaging_process_duration_seconds_*` and
+`swissgeo_service_print_job_wait_duration_seconds_*`. Both `service-print` processes share the
+label `job="service-print"` (from `service.name`); `otel_scope_name="app.helpers.metrics"`
+isolates the renderer's instruments from the API's.
 
 ```promql
-# Raw count since the process started -- use this to check a job was counted at all
+# Raw count since the process started. Use this to check a job was counted at all
 messaging_client_consumed_messages_total{otel_scope_name="app.helpers.metrics"}
 
 # Print jobs rendered successfully, per second
@@ -278,10 +292,15 @@ sum(rate(messaging_client_consumed_messages_total{
   sum(rate(messaging_client_consumed_messages_total{otel_scope_name="app.helpers.metrics", error_type!=""}[5m]))
 / sum(rate(messaging_client_consumed_messages_total{otel_scope_name="app.helpers.metrics"}[5m]))
 
-# p95 processing time over 5m (render + upload), successful attempts
+# p95 processing time over 1m (render + upload), successful attempts
 histogram_quantile(0.95, sum by (le) (rate(
   messaging_process_duration_seconds_bucket{
-    otel_scope_name="app.helpers.metrics", error_type=""}[5m])))
+    otel_scope_name="app.helpers.metrics", error_type=""}[1m])))
+
+# p95 queue wait over 1m (first pickup)
+histogram_quantile(0.95, sum by (le) (rate(
+  swissgeo_service_print_job_wait_duration_seconds_bucket{
+    otel_scope_name="app.helpers.metrics"}[1m])))
 ```
 
 #### Local OTEL testing
