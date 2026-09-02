@@ -147,7 +147,10 @@ def handle_message(
         # ClientError/timeouts, etc.) are deliberately NOT caught here. They
         # propagate and crash the worker so the orchestrator restarts it.
         elapsed = time.monotonic() - start
-        logger.exception("Job %s failed during processing", job_id)
+        if isinstance(exc, KeyError):
+            logger.error("Job %s failed: malformed payload, missing key %s", job_id, exc)
+        else:
+            logger.error("Job %s failed: %s", job_id, exc)
         trace.get_current_span().set_status(StatusCode.ERROR, str(exc))
         record_process_duration(elapsed, error_type=JOB_FAILED)
         if receive_count >= SQS_MAX_RECEIVE_COUNT:
