@@ -73,7 +73,8 @@ def receive_messages(queue_url: str, wait_time_seconds: int) -> list[MessageType
 
     Returns a list of raw SQS message dicts. Each message contains at least
     'Body' (JSON string of the job item), 'ReceiptHandle' (needed for deletion),
-    and 'Attributes' including 'ApproximateReceiveCount'.
+    and 'Attributes' including 'ApproximateReceiveCount' and 'SentTimestamp'
+    (epoch ms the message entered the queue, used for the queue-wait metric).
     """
     sqs = get_sqs_client()
     try:
@@ -81,7 +82,7 @@ def receive_messages(queue_url: str, wait_time_seconds: int) -> list[MessageType
             QueueUrl=queue_url,
             MaxNumberOfMessages=SQS_MAX_MESSAGES,
             WaitTimeSeconds=wait_time_seconds,
-            AttributeNames=["ApproximateReceiveCount"],
+            AttributeNames=["ApproximateReceiveCount", "SentTimestamp"],
         )
         messages = response.get("Messages", [])
         logger.debug("Received %d message(s) from SQS queue %s", len(messages), queue_url)

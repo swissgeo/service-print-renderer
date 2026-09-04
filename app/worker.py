@@ -12,6 +12,7 @@ import logging
 import signal
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from opentelemetry import trace
@@ -28,6 +29,13 @@ from app.config.settings import (
 )
 from app.helpers.dynamo_db import get_print_job, update_job_status
 from app.helpers.gpu_info import log_gpu_info
+from app.helpers.metrics import (
+    JOB_FAILED,
+    MAX_RETRIES_EXCEEDED,
+    record_job_wait_duration,
+    record_message_consumed,
+    record_process_duration,
+)
 from app.helpers.otel import initialize_otel, shutdown_otel, traced
 from app.helpers.printing import ChromeBrowserManager, RenderingError
 from app.helpers.s3 import upload_pdf
@@ -55,6 +63,22 @@ def _handle_signal(signum: int, _frame: object) -> None:
     global _shutdown  # noqa: PLW0603
     logger.info("Received signal %d, shutting down gracefully...", signum)
     _shutdown = True
+
+
+def _queue_wait_seconds(sent_timestamp: str | None) -> float | None:
+    """Seconds a message sat in the queue, from its SQS ``SentTimestamp`` (epoch ms).
+
+    None when the attribute is absent or non-numeric — a metric sample is not
+    worth crashing the worker. Clamped at 0 to absorb clock skew between the API
+    host and this one.
+    """
+    if sent_timestamp is None:
+        return None
+    try:
+        sent_ms = int(sent_timestamp)
+    except ValueError:
+        return None
+    return max(0.0, time.time() - sent_ms / 1000)
 
 
 @traced("worker.process_job")
@@ -100,6 +124,7 @@ def handle_message(
     """
     trace.get_current_span().set_attribute("job.id", job_id)
     trace.get_current_span().set_attribute("messaging.receive_count", receive_count)
+    start = time.monotonic()
     try:
         pdf_location = process_job(job, browser)
         # The PDF lives at a deterministic key ({prefix}/{job_id}.pdf), so we only
@@ -111,6 +136,9 @@ def handle_message(
             finished_timestamp_iso_8601=get_iso_8601_timestamp(),
         )
         delete_message(receipt_handle, get_queue_url())
+        elapsed = time.monotonic() - start
+        record_message_consumed()
+        record_process_duration(elapsed)
         logger.info("Job %s completed successfully (pdf uploaded to %s)", job_id, pdf_location)
     except (RenderingError, KeyError) as exc:
         # Job-level failure: the job itself is bad (unrenderable or malformed
@@ -118,8 +146,13 @@ def handle_message(
         # the job 'error' on the final attempt. Infrastructure errors (AWS
         # ClientError/timeouts, etc.) are deliberately NOT caught here. They
         # propagate and crash the worker so the orchestrator restarts it.
-        logger.exception("Job %s failed during processing", job_id)
+        elapsed = time.monotonic() - start
+        # Expected, fully-classified failure: one ERROR line, not a traceback
+        # (the unexpected Playwright path in printing.py keeps its traceback).
+        reason = f"malformed payload, missing key {exc}" if isinstance(exc, KeyError) else str(exc)
+        logger.error("Job %s failed: %s", job_id, reason)  # noqa: TRY400
         trace.get_current_span().set_status(StatusCode.ERROR, str(exc))
+        record_process_duration(elapsed, error_type=JOB_FAILED)
         if receive_count >= SQS_MAX_RECEIVE_COUNT:
             update_job_status(
                 job_id,
@@ -127,6 +160,7 @@ def handle_message(
                 finished_timestamp_iso_8601=get_iso_8601_timestamp(),
                 message="Internal rendering error",
             )
+            record_message_consumed(error_type=MAX_RETRIES_EXCEEDED)
             # Do not delete — let the visibility timeout expire so SQS
             # moves the message to the DLQ via the redrive policy.
 
@@ -190,6 +224,15 @@ def run() -> None:
                         receive_count: int = int(
                             message.get("Attributes", {}).get("ApproximateReceiveCount", 1)
                         )
+                        # First pickup only: on a redelivery "now - SentTimestamp"
+                        # is the message's age (spanning visibility-timeout cycles),
+                        # not the queue wait we want to measure.
+                        if receive_count <= 1:
+                            record_job_wait_duration(
+                                _queue_wait_seconds(
+                                    message.get("Attributes", {}).get("SentTimestamp")
+                                )
+                            )
                         try:
                             job = parse_message_body(message)
                             job_id: str = job["job_id"]
@@ -245,7 +288,7 @@ if __name__ == "__main__":
         log_gpu_info()
         sys.exit(0)
 
-    trace_provider, logger_provider = initialize_otel()
+    trace_provider, logger_provider, meter_provider = initialize_otel()
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -256,4 +299,4 @@ if __name__ == "__main__":
         logger.exception("Unhandled exception in worker")
         sys.exit(1)
     finally:
-        shutdown_otel(trace_provider, logger_provider)
+        shutdown_otel(trace_provider, logger_provider, meter_provider)

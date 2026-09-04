@@ -21,6 +21,12 @@ exporters:
   debug/metrics:
     verbosity: detailed
 
+  # Push metrics into Prometheus via its OTLP receiver (started with
+  # --web.enable-otlp-receiver in docker-compose-otel.yml). View them at
+  # http://localhost:9090.
+  otlphttp/prometheus:
+    endpoint: http://prometheus:9090/api/v1/otlp
+
 service:
   pipelines:
     traces:
@@ -34,4 +40,4 @@ service:
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug/metrics]
+      exporters: [debug/metrics, otlphttp/prometheus]

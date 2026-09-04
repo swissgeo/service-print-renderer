@@ -160,12 +160,12 @@ test: $(LOGS_DIR) ## Run tests locally
 
 
 .PHONY: start-otel
-start-otel: ## Run otel collector and jaeger trace analyzer locally
+start-otel: ## Run otel collector, jaeger (traces) and prometheus (metrics) locally
 	docker compose -p service-print-local-otel -f docker-compose-otel.yml up -d
 
 
 .PHONY: stop-otel
-stop-otel: ## Stop the otel collector and jaeger trace analyzer
+stop-otel: ## Stop the otel collector, jaeger and prometheus
 	docker compose -p service-print-local-otel -f docker-compose-otel.yml down
 
 
