@@ -26,6 +26,7 @@
     - [Local OTEL testing](#local-otel-testing)
 - [Debugging](#debugging)
   - [WebGL renderer info](#webgl-renderer-info)
+  - [Fix, if the web app on dev is not working](#fix-if-the-web-app-on-dev-is-not-working)
 
 ## Summary Of The Project
 
@@ -337,3 +338,32 @@ make renderer-info
 ```
 
 This launches a headless Chrome instance, evaluates a WebGL probe, logs the hardware-acceleration status and the renderer name, then exits. No queue polling or AWS calls are made.
+
+### Fix, if the web app on dev is not working
+
+nginx, one config file: Every request (any path, query, method) returns the same 200 HTML that fires gaMapReady:
+
+```bash
+# dummy-portal.conf
+server {
+    listen 80 default_server;
+    location / {
+        default_type text/html;
+        return 200 '<!doctype html><html><head><meta charset="utf-8"><title>dummy print</title></head><body><h1>dummy print page</h1><script>window.postMessage({type:"gaMapReady"},"*");</script></body></html>';
+    }
+}
+```
+
+edit `.env`:
+
+```bash
+PORTAL_URL=http://localhost:8090/?
+```
+
+Run it:
+
+```bash
+docker run -d --name dummy-portal -p 8090:80 \
+  -v "$PWD/dummy-portal.conf:/etc/nginx/conf.d/default.conf:ro" \
+  nginx:alpine
+```
