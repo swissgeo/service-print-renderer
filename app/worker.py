@@ -31,9 +31,9 @@ from app.helpers.dynamo_db import get_print_job, update_job_status
 from app.helpers.gpu_info import log_gpu_info
 from app.helpers.metrics import (
     ErrorType,
-    record_job_wait_duration,
     record_message_consumed,
     record_process_duration,
+    record_queue_duration,
 )
 from app.helpers.otel import initialize_otel, shutdown_otel, traced
 from app.helpers.printing import ChromeBrowserManager, RenderingError
@@ -64,13 +64,13 @@ def _handle_signal(signum: int, _frame: object) -> None:
     _shutdown = True
 
 
-def _queue_wait_seconds(sent_timestamp: str | None) -> float:
-    """Seconds a message sat in the queue, from its SQS ``SentTimestamp`` (epoch ms).
+def _seconds_since_sent(sent_timestamp: str | None) -> float:
+    """Seconds since a message was sent to SQS, from its ``SentTimestamp`` (epoch ms).
 
     SQS always sets ``SentTimestamp`` and so does moto, so a missing or
     non-numeric value can only be a code regression that dropped it from the
     ``receive_message`` ``AttributeNames``. Fail fast: every message would hit
-    this, and a silently empty queue-wait metric is worse discovered late.
+    this, and a silently empty queue-duration metric is worse discovered late.
     Clamped at 0 to absorb clock skew between the API host and this one.
     """
     if sent_timestamp is None:
@@ -157,15 +157,21 @@ def handle_message(
         reason = f"malformed payload, missing key {exc}" if isinstance(exc, KeyError) else str(exc)
         logger.error("Job %s failed: %s", job_id, reason)  # noqa: TRY400
         trace.get_current_span().set_status(StatusCode.ERROR, str(exc))
-        record_process_duration(elapsed, error_type=ErrorType.FAILED)
-        if receive_count >= SQS_MAX_RECEIVE_COUNT:
+        final_attempt = receive_count >= SQS_MAX_RECEIVE_COUNT
+        record_process_duration(
+            elapsed,
+            error_type=ErrorType.JOB_PROCESSING_FAILED
+            if final_attempt
+            else ErrorType.JOB_PROCESSING_RETRIED,
+        )
+        if final_attempt:
             update_job_status(
                 job_id,
                 "error",
                 finished_timestamp_iso_8601=get_iso_8601_timestamp(),
                 message="Internal rendering error",
             )
-            record_message_consumed(error_type=ErrorType.MAX_RETRIES_EXCEEDED)
+            record_message_consumed(error_type=ErrorType.JOB_PROCESSING_RETRIES_EXCEEDED)
             # Do not delete — let the visibility timeout expire so SQS
             # moves the message to the DLQ via the redrive policy.
 
@@ -229,15 +235,16 @@ def run() -> None:
                         receive_count: int = int(
                             message.get("Attributes", {}).get("ApproximateReceiveCount", 1)
                         )
-                        # Validate SentTimestamp on every message (fail fast), but
-                        # record only on first pickup: on a redelivery
-                        # "now - SentTimestamp" is the message's age across
-                        # visibility-timeout cycles, not the queue wait.
-                        wait_seconds = _queue_wait_seconds(
-                            message.get("Attributes", {}).get("SentTimestamp")
+                        # First delivery: "now - SentTimestamp" is the clean queue
+                        # wait. On a redelivery SentTimestamp is unchanged, so it
+                        # is the message's age across the retry cycle — recorded
+                        # under error.type=job-processing-retried as its own series.
+                        record_queue_duration(
+                            _seconds_since_sent(message.get("Attributes", {}).get("SentTimestamp")),
+                            error_type=ErrorType.JOB_PROCESSING_RETRIED
+                            if receive_count > 1
+                            else None,
                         )
-                        if receive_count <= 1:
-                            record_job_wait_duration(wait_seconds)
                         try:
                             job = parse_message_body(message)
                             job_id: str = job["job_id"]

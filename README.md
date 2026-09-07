@@ -213,7 +213,7 @@ described under [Metrics](#metrics).
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP gRPC endpoint of the collector |
 | `OTEL_EXPORTER_OTLP_INSECURE` | `false` | Set to `true` for an insecure (non-TLS) connection. Required for a plaintext local collector |
 | `OTEL_EXPORTER_OTLP_HEADERS` | - | Optional headers for the OTLP collector (e.g. for authentication) |
-| `OTEL_RESOURCE_ATTRIBUTES` | - | Extra resource attributes attached to all telemetry. `service.name` is ignored (pinned to `service-print` in code, since the API and the renderer are two processes of one logical service) |
+| `OTEL_RESOURCE_ATTRIBUTES` | - | Extra resource attributes attached to all telemetry. |
 
 #### Logging implementation
 
@@ -233,38 +233,45 @@ attribute keys.
 
 | Metric | Type | Unit | Attributes | Description |
 | --- | --- | --- | --- | --- |
-| `messaging.client.consumed.messages` | Counter | `{message}` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs`, `error.type` = `max-retries-exceeded` (permanent failures only) | Print jobs the renderer finished with. One message is one print job |
-| `messaging.process.duration` | Histogram | `s` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs`, `error.type` = `failed` (failed attempts only) | Time the renderer spent processing one message (render + upload). Excludes the queue wait |
-| `swissgeo.service_print.job.wait.duration` | Histogram | `s` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs` | Time a job spent waiting in the SQS queue before its first pickup by the renderer |
+| `messaging.client.consumed.messages` | Counter | `{message}` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs`, `error.type` = `job-processing-retries-exceeded` (permanent failures only) | Print jobs the renderer finished with. One message is one print job |
+| `messaging.process.duration` | Histogram | `s` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs`, `error.type` = `job-processing-retried` (failed, will be retried) or `job-processing-failed` (failed, last attempt) | Time the renderer spent processing one message (render + upload). Excludes the queue wait |
+| `swissgeo.messaging.queue.duration` | Histogram | `s` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs`, `error.type` = `job-processing-retried` (redeliveries only) | Time from a message being sent to SQS to it being received by the renderer |
 
 For the two semantic-convention instruments the name, unit and description are not written out as
-literals — they come from `opentelemetry-semantic-conventions`, so a spec update propagates on the
+literals. They come from `opentelemetry-semantic-conventions`, so a spec update propagates on the
 next dependency bump. `messaging.operation.name` is the *domain* operation (`print`), not the SQS
 API call.
 
 `messaging.client.consumed.messages` is recorded **once per job, at its terminal outcome**: a
 successful render, or a permanent failure once the SQS redrive policy is exhausted
-(`ApproximateReceiveCount` reaches `SQS_MAX_RECEIVE_COUNT`), the latter carrying `error.type`.
-Redeliveries in between are not counted, so the series without `error.type` is exactly the jobs
-that rendered successfully. Jobs that only ever hit infrastructure errors crash the worker and
-are redriven to the DLQ without being counted here.
+(`ApproximateReceiveCount` reaches `SQS_MAX_RECEIVE_COUNT`), the latter carrying
+`error.type = job-processing-retries-exceeded`. Redeliveries in between are not counted, so the
+series without `error.type` is exactly the jobs that rendered successfully. Jobs that only ever
+hit infrastructure errors crash the worker and are redriven to the DLQ without being counted here.
 
 This pairs with the API's `messaging.client.sent.messages`: sent counts enqueue attempts,
 consumed counts jobs picked up and finished, so the two can be compared as rates.
 
 `messaging.process.duration` is measured with `time.monotonic()` around the processing in
-`handle_message` and recorded **once per processing attempt** — a redelivered job adds a sample
+`handle_message` and recorded **once per processing attempt** - a redelivered job adds a sample
 per attempt, so its `_count` is attempts (not distinct jobs) and `_sum` accumulates a job's total
-processing time across retries. A failed attempt carries `error.type = failed`.
+processing time across retries. A failed attempt carries `error.type = job-processing-retried`
+while it still has retries left, then `job-processing-failed` on the final attempt - so
+`job-processing-retried` is the time burned on work that gets redone.
 
-`swissgeo.service_print.job.wait.duration` is custom: the messaging conventions have no instrument
-for a message's queue-wait time (`messaging.client.operation.duration` times the receive *call*,
-not the message's age). It is `now − SentTimestamp` (the SQS system attribute, epoch ms) and
-recorded **once per job, on the first delivery only** (`ApproximateReceiveCount <= 1`). On a
-redelivery that difference is the message's *age* — it spans the visibility-timeout cycles since
-the first receive — not the queue wait, so those are skipped. The value is clamped at 0 to absorb
-clock skew between the two hosts. A CloudWatch `ApproximateAgeOfOldestMessage` alarm still has its
-place — this metric goes quiet exactly when nothing is being consumed.
+`swissgeo.messaging.queue.duration` is custom: the messaging conventions have no instrument for
+the time a message sat in the queue (`messaging.client.operation.duration` times the receive
+*call*, not the wait). It is `now - SentTimestamp` (the SQS system attribute, epoch ms), clamped
+at 0 for clock skew, recorded **once per delivery**:
+
+- **first delivery** (no `error.type`): The clean queue wait, sent as first pickup.
+- **redelivery** (`error.type = job-processing-retried`): SQS does not reset `SentTimestamp`, so
+  this is the message's *total age*: it spans the failed attempt(s) and their
+  `SQS_VISIBILITY_TIMEOUT` waits. Kept as its own series so it never pollutes the first-pickup
+  percentiles; it quantifies how far behind a job that needed retries has fallen.
+
+A CloudWatch `ApproximateAgeOfOldestMessage` alarm still has its place as this metric goes quiet
+exactly when nothing is being consumed.
 
 ##### Example queries
 
@@ -277,7 +284,7 @@ OTEL names are rewritten on the way in: `.` becomes `_`, counters gain `_total`,
 split into `_bucket` / `_count` / `_sum`, and annotation units (`{message}`) are dropped while
 `s` becomes a `_seconds` suffix. So the metrics above are
 `messaging_client_consumed_messages_total`, `messaging_process_duration_seconds_*` and
-`swissgeo_service_print_job_wait_duration_seconds_*`. Both `service-print` processes share the
+`swissgeo_messaging_queue_duration_seconds_*`. Both `service-print` processes share the
 label `job="service-print"` (from `service.name`); `otel_scope_name="app.helpers.metrics"`
 isolates the renderer's instruments from the API's.
 
@@ -298,10 +305,10 @@ histogram_quantile(0.95, sum by (le) (rate(
   messaging_process_duration_seconds_bucket{
     otel_scope_name="app.helpers.metrics", error_type=""}[1m])))
 
-# p95 queue wait over 1m (first pickup)
+# p95 queue wait over 1m (first pickup — exclude the retry-cycle series)
 histogram_quantile(0.95, sum by (le) (rate(
-  swissgeo_service_print_job_wait_duration_seconds_bucket{
-    otel_scope_name="app.helpers.metrics"}[1m])))
+  swissgeo_messaging_queue_duration_seconds_bucket{
+    otel_scope_name="app.helpers.metrics", error_type=""}[1m])))
 ```
 
 #### Local OTEL testing

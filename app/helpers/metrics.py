@@ -9,6 +9,7 @@ emitted under this scope -- bump it on any schema change (semver).
 """
 
 from enum import StrEnum
+from typing import Literal
 
 from opentelemetry import metrics
 from opentelemetry.semconv._incubating.attributes import messaging_attributes
@@ -25,12 +26,17 @@ meter = metrics.get_meter(__name__, METRICS_SCHEMA_VERSION)
 class ErrorType(StrEnum):
     """Allowed values for the ``error.type`` metric attribute.
 
-    A closed set keeps the attribute low-cardinality. An unbounded string here
-    would fan each instrument out into a new time series per distinct value.
+    A closed set keeps the attribute low-cardinality -- an unbounded string here
+    would fan each instrument out into a new time series per distinct value. The
+    values are mutually exclusive on any one sample.
     """
 
-    MAX_RETRIES_EXCEEDED = "max-retries-exceeded"
-    FAILED = "failed"
+    # One processing attempt failed; the job will be redelivered for another try.
+    JOB_PROCESSING_RETRIED = "job-processing-retried"
+    # One processing attempt failed on the last try, no retries left.
+    JOB_PROCESSING_FAILED = "job-processing-failed"
+    # The job failed for good, having exhausted the SQS redrive policy.
+    JOB_PROCESSING_RETRIES_EXCEEDED = "job-processing-retries-exceeded"
 
 
 # Emits "messaging.client.consumed.messages" ({message}) and
@@ -40,16 +46,17 @@ class ErrorType(StrEnum):
 _consumed_messages = create_messaging_client_consumed_messages(meter)
 _process_duration = create_messaging_process_duration(meter)
 
-# Emits "swissgeo_service_print_job_wait_duration_seconds_*" in Prometheus.
-# Custom because the messaging semantic conventions have no instrument for a
-# message's queue-wait time: messaging.client.operation.duration measures the
-# receive *call*, not how long the message sat in the queue.
-_job_wait_duration = meter.create_histogram(
-    name="swissgeo.service_print.job.wait.duration",
+# Emits "swissgeo.messaging.queue.duration" (s).
+# Custom because the messaging semantic conventions have no instrument for the
+# time a message sat in the queue: messaging.client.operation.duration measures
+# the receive *call*, not the wait. swissgeo.messaging.* is the ADD's form for a
+# metric that fits an OTEL namespace but is not defined by the spec.
+_queue_duration = meter.create_histogram(
+    name="swissgeo.messaging.queue.duration",
     unit="s",
     description=(
-        "Time a print job spent waiting in the SQS queue, from being enqueued to "
-        "being received by the renderer."
+        "Time from a message being sent to the SQS queue to it being received by "
+        "the renderer, from SentTimestamp."
     ),
 )
 
@@ -61,12 +68,15 @@ _MESSAGING_ATTRIBUTES = {
 }
 
 
-def record_message_consumed(error_type: ErrorType | None = None) -> None:
+def record_message_consumed(
+    error_type: Literal[ErrorType.JOB_PROCESSING_RETRIES_EXCEEDED] | None = None,
+) -> None:
     """Count one print job the renderer finished with.
 
     Recorded once per job, at its terminal outcome: a successful render, or a
     permanent failure once the SQS redrive policy is exhausted -- the latter
-    carrying ``error.type``. The redeliveries in between are not counted.
+    carrying ``error.type = job-processing-retries-exceeded``. The redeliveries
+    in between are not counted.
     """
     attributes = _MESSAGING_ATTRIBUTES
     if error_type is not None:
@@ -75,12 +85,18 @@ def record_message_consumed(error_type: ErrorType | None = None) -> None:
     _consumed_messages.add(1, attributes)
 
 
-def record_process_duration(seconds: float, error_type: ErrorType | None = None) -> None:
+def record_process_duration(
+    seconds: float,
+    error_type: Literal[ErrorType.JOB_PROCESSING_RETRIED, ErrorType.JOB_PROCESSING_FAILED]
+    | None = None,
+) -> None:
     """Record how long the renderer spent processing one message.
 
     Recorded once per processing attempt, so a redelivered job adds a sample per
-    attempt and ``_sum`` accumulates its total processing time. A failed attempt
-    carries ``error.type``. Excludes the time the message waited in the queue.
+    attempt and ``_sum`` accumulates its total processing time. Excludes the
+    queue wait. A failed attempt carries ``error.type``:
+    ``job-processing-retried`` when it will be retried, ``job-processing-failed``
+    on the final attempt.
     """
     attributes = _MESSAGING_ATTRIBUTES
     if error_type is not None:
@@ -89,9 +105,20 @@ def record_process_duration(seconds: float, error_type: ErrorType | None = None)
     _process_duration.record(seconds, attributes)
 
 
-def record_job_wait_duration(seconds: float) -> None:
-    """Record how long a print job waited in the queue before its first pickup.
+def record_queue_duration(
+    seconds: float,
+    error_type: Literal[ErrorType.JOB_PROCESSING_RETRIED] | None = None,
+) -> None:
+    """Record how long a message had been in the SQS queue when received.
 
-    Recorded once per job, on the first delivery only.
+    First delivery (no ``error.type``): the clean queue wait. A redelivery
+    carries ``error.type = job-processing-retried``; ``SentTimestamp`` is not
+    reset on redelivery, so the value then spans the whole retry cycle (the
+    failed attempt(s) plus their visibility-timeout waits) -- the message's total
+    age, kept as a separate series from the first-pickup wait.
     """
-    _job_wait_duration.record(seconds, _MESSAGING_ATTRIBUTES)
+    attributes = _MESSAGING_ATTRIBUTES
+    if error_type is not None:
+        attributes = attributes | {error_attributes.ERROR_TYPE: error_type}
+
+    _queue_duration.record(seconds, attributes)
