@@ -30,8 +30,7 @@ from app.config.settings import (
 from app.helpers.dynamo_db import get_print_job, update_job_status
 from app.helpers.gpu_info import log_gpu_info
 from app.helpers.metrics import (
-    JOB_FAILED,
-    MAX_RETRIES_EXCEEDED,
+    ErrorType,
     record_job_wait_duration,
     record_message_consumed,
     record_process_duration,
@@ -152,7 +151,7 @@ def handle_message(
         reason = f"malformed payload, missing key {exc}" if isinstance(exc, KeyError) else str(exc)
         logger.error("Job %s failed: %s", job_id, reason)  # noqa: TRY400
         trace.get_current_span().set_status(StatusCode.ERROR, str(exc))
-        record_process_duration(elapsed, error_type=JOB_FAILED)
+        record_process_duration(elapsed, error_type=ErrorType.FAILED)
         if receive_count >= SQS_MAX_RECEIVE_COUNT:
             update_job_status(
                 job_id,
@@ -160,7 +159,7 @@ def handle_message(
                 finished_timestamp_iso_8601=get_iso_8601_timestamp(),
                 message="Internal rendering error",
             )
-            record_message_consumed(error_type=MAX_RETRIES_EXCEEDED)
+            record_message_consumed(error_type=ErrorType.MAX_RETRIES_EXCEEDED)
             # Do not delete — let the visibility timeout expire so SQS
             # moves the message to the DLQ via the redrive policy.
 
