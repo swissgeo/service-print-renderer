@@ -64,19 +64,25 @@ def _handle_signal(signum: int, _frame: object) -> None:
     _shutdown = True
 
 
-def _queue_wait_seconds(sent_timestamp: str | None) -> float | None:
+def _queue_wait_seconds(sent_timestamp: str | None) -> float:
     """Seconds a message sat in the queue, from its SQS ``SentTimestamp`` (epoch ms).
 
-    None when the attribute is absent or non-numeric — a metric sample is not
-    worth crashing the worker. Clamped at 0 to absorb clock skew between the API
-    host and this one.
+    SQS always sets ``SentTimestamp`` and so does moto, so a missing or
+    non-numeric value can only be a code regression that dropped it from the
+    ``receive_message`` ``AttributeNames``. Fail fast: every message would hit
+    this, and a silently empty queue-wait metric is worse discovered late.
+    Clamped at 0 to absorb clock skew between the API host and this one.
     """
     if sent_timestamp is None:
-        return None
+        raise RuntimeError(
+            "SQS message has no SentTimestamp attribute: Check the receive_message AttributeNames"
+        )
     try:
         sent_ms = int(sent_timestamp)
-    except ValueError:
-        return None
+    except ValueError as exc:
+        raise RuntimeError(
+            f"SQS SentTimestamp {sent_timestamp!r} is not an epoch-ms integer"
+        ) from exc
     return max(0.0, time.time() - sent_ms / 1000)
 
 
@@ -223,15 +229,15 @@ def run() -> None:
                         receive_count: int = int(
                             message.get("Attributes", {}).get("ApproximateReceiveCount", 1)
                         )
-                        # First pickup only: on a redelivery "now - SentTimestamp"
-                        # is the message's age (spanning visibility-timeout cycles),
-                        # not the queue wait we want to measure.
+                        # Validate SentTimestamp on every message (fail fast), but
+                        # record only on first pickup: on a redelivery
+                        # "now - SentTimestamp" is the message's age across
+                        # visibility-timeout cycles, not the queue wait.
+                        wait_seconds = _queue_wait_seconds(
+                            message.get("Attributes", {}).get("SentTimestamp")
+                        )
                         if receive_count <= 1:
-                            record_job_wait_duration(
-                                _queue_wait_seconds(
-                                    message.get("Attributes", {}).get("SentTimestamp")
-                                )
-                            )
+                            record_job_wait_duration(wait_seconds)
                         try:
                             job = parse_message_body(message)
                             job_id: str = job["job_id"]

@@ -89,13 +89,9 @@ def record_process_duration(seconds: float, error_type: ErrorType | None = None)
     _process_duration.record(seconds, attributes)
 
 
-def record_job_wait_duration(seconds: float | None) -> None:
+def record_job_wait_duration(seconds: float) -> None:
     """Record how long a print job waited in the queue before its first pickup.
 
-    Recorded once per job, on the first delivery only. ``seconds`` is None when
-    SentTimestamp is missing or unparseable, and nothing is recorded then.
+    Recorded once per job, on the first delivery only.
     """
-    if seconds is None:
-        return
-
     _job_wait_duration.record(seconds, _MESSAGING_ATTRIBUTES)
