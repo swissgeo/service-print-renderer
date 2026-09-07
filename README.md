@@ -252,7 +252,7 @@ hit infrastructure errors crash the worker and are redriven to the DLQ without b
 This pairs with the API's `messaging.client.sent.messages`: sent counts enqueue attempts,
 consumed counts jobs picked up and finished, so the two can be compared as rates.
 
-`messaging.process.duration` is measured with `time.monotonic()` around the processing in
+`messaging.process.duration` is measured with `time.perf_counter()` around the processing in
 `handle_message` and recorded **once per processing attempt** - a redelivered job adds a sample
 per attempt, so its `_count` is attempts (not distinct jobs) and `_sum` accumulates a job's total
 processing time across retries. A failed attempt carries `error.type = job-processing-retried`

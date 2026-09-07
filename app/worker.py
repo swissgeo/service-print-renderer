@@ -129,7 +129,7 @@ def handle_message(
     """
     trace.get_current_span().set_attribute("job.id", job_id)
     trace.get_current_span().set_attribute("messaging.receive_count", receive_count)
-    start = time.monotonic()
+    start = time.perf_counter()
     try:
         pdf_location = process_job(job, browser)
         # The PDF lives at a deterministic key ({prefix}/{job_id}.pdf), so we only
@@ -141,7 +141,7 @@ def handle_message(
             finished_timestamp_iso_8601=get_iso_8601_timestamp(),
         )
         delete_message(receipt_handle, get_queue_url())
-        elapsed = time.monotonic() - start
+        elapsed = time.perf_counter() - start
         record_message_consumed()
         record_process_duration(elapsed)
         logger.info("Job %s completed successfully (pdf uploaded to %s)", job_id, pdf_location)
@@ -151,7 +151,7 @@ def handle_message(
         # the job 'error' on the final attempt. Infrastructure errors (AWS
         # ClientError/timeouts, etc.) are deliberately NOT caught here. They
         # propagate and crash the worker so the orchestrator restarts it.
-        elapsed = time.monotonic() - start
+        elapsed = time.perf_counter() - start
         # Expected, fully-classified failure: one ERROR line, not a traceback
         # (the unexpected Playwright path in printing.py keeps its traceback).
         reason = f"malformed payload, missing key {exc}" if isinstance(exc, KeyError) else str(exc)
