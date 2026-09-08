@@ -160,9 +160,9 @@ def handle_message(
         final_attempt = receive_count >= SQS_MAX_RECEIVE_COUNT
         record_process_duration(
             elapsed,
-            error_type=ErrorType.JOB_PROCESSING_FAILED
+            error_type=ErrorType.PROCESSING_FAILED
             if final_attempt
-            else ErrorType.JOB_PROCESSING_RETRIED,
+            else ErrorType.PROCESSING_RETRIED,
         )
         if final_attempt:
             update_job_status(
@@ -171,7 +171,7 @@ def handle_message(
                 finished_timestamp_iso_8601=get_iso_8601_timestamp(),
                 message="Internal rendering error",
             )
-            record_message_consumed(error_type=ErrorType.JOB_PROCESSING_RETRIES_EXCEEDED)
+            record_message_consumed(error_type=ErrorType.PROCESSING_RETRIES_EXCEEDED)
             # Do not delete — let the visibility timeout expire so SQS
             # moves the message to the DLQ via the redrive policy.
 
@@ -238,12 +238,10 @@ def run() -> None:
                         # First delivery: "now - SentTimestamp" is the clean queue
                         # wait. On a redelivery SentTimestamp is unchanged, so it
                         # is the message's age across the retry cycle — recorded
-                        # under error.type=job-processing-retried as its own series.
+                        # under error.type=processing-retried as its own series.
                         record_queue_duration(
                             _seconds_since_sent(message.get("Attributes", {}).get("SentTimestamp")),
-                            error_type=ErrorType.JOB_PROCESSING_RETRIED
-                            if receive_count > 1
-                            else None,
+                            error_type=ErrorType.PROCESSING_RETRIED if receive_count > 1 else None,
                         )
                         try:
                             job = parse_message_body(message)

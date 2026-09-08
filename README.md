@@ -228,14 +228,14 @@ alongside traces and logs. Instruments are defined in
 `scope.version = 1.0.0`); bump `METRICS_SCHEMA_VERSION` on any schema change. Two follow the
 OpenTelemetry [semantic conventions for messaging
 metrics](https://opentelemetry.io/docs/specs/semconv/messaging/messaging-metrics/); the third is
-custom because the conventions model no queue-wait instrument. All three reuse the convention's
+custom because the conventions model has no queue-wait instrument. All three reuse the convention's
 attribute keys.
 
 | Metric | Type | Unit | Attributes | Description |
 | --- | --- | --- | --- | --- |
-| `messaging.client.consumed.messages` | Counter | `{message}` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs`, `error.type` = `job-processing-retries-exceeded` (permanent failures only) | Print jobs the renderer finished with. One message is one print job |
-| `messaging.process.duration` | Histogram | `s` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs`, `error.type` = `job-processing-retried` (failed, will be retried) or `job-processing-failed` (failed, last attempt) | Time the renderer spent processing one message (render + upload). Excludes the queue wait |
-| `swissgeo.messaging.queue.duration` | Histogram | `s` | `messaging.operation.name` = `print`, `messaging.system` = `aws_sqs`, `error.type` = `job-processing-retried` (redeliveries only) | Time from a message being sent to SQS to it being received by the renderer |
+| `messaging.client.consumed.messages` | Counter | `{message}` | `messaging.operation.name = print`,<br>`messaging.system = aws_sqs`,<br>`error.type = processing-retries-exceeded` (permanent failures only) | Print jobs the renderer finished with. One message is one print job |
+| `messaging.process.duration` | Histogram | `s` | `messaging.operation.name = print`,<br>`messaging.system = aws_sqs`,<br>`error.type = processing-retried` (failed, will be retried) or `processing-failed` (failed, last attempt) | Time the renderer spent processing one message (render + upload). Excludes the queue wait |
+| `swissgeo.messaging.queue.duration` | Histogram | `s` | `messaging.operation.name = print`,<br>`messaging.system = aws_sqs`,<br>`error.type = processing-retried` (redeliveries only) | Time from a message being sent to SQS to it being received by the renderer |
 
 For the two semantic-convention instruments the name, unit and description are not written out as
 literals. They come from `opentelemetry-semantic-conventions`, so a spec update propagates on the
@@ -245,7 +245,7 @@ API call.
 `messaging.client.consumed.messages` is recorded **once per job, at its terminal outcome**: a
 successful render, or a permanent failure once the SQS redrive policy is exhausted
 (`ApproximateReceiveCount` reaches `SQS_MAX_RECEIVE_COUNT`), the latter carrying
-`error.type = job-processing-retries-exceeded`. Redeliveries in between are not counted, so the
+`error.type = processing-retries-exceeded`. Redeliveries in between are not counted, so the
 series without `error.type` is exactly the jobs that rendered successfully. Jobs that only ever
 hit infrastructure errors crash the worker and are redriven to the DLQ without being counted here.
 
@@ -255,9 +255,9 @@ consumed counts jobs picked up and finished, so the two can be compared as rates
 `messaging.process.duration` is measured with `time.perf_counter()` around the processing in
 `handle_message` and recorded **once per processing attempt** - a redelivered job adds a sample
 per attempt, so its `_count` is attempts (not distinct jobs) and `_sum` accumulates a job's total
-processing time across retries. A failed attempt carries `error.type = job-processing-retried`
-while it still has retries left, then `job-processing-failed` on the final attempt - so
-`job-processing-retried` is the time burned on work that gets redone.
+processing time across retries. A failed attempt carries `error.type = processing-retried`
+while it still has retries left, then `processing-failed` on the final attempt - so
+`processing-retried` is the time burned on work that gets redone.
 
 `swissgeo.messaging.queue.duration` is custom: the messaging conventions have no instrument for
 the time a message sat in the queue (`messaging.client.operation.duration` times the receive
@@ -265,7 +265,7 @@ the time a message sat in the queue (`messaging.client.operation.duration` times
 at 0 for clock skew, recorded **once per delivery**:
 
 - **first delivery** (no `error.type`): The clean queue wait, sent as first pickup.
-- **redelivery** (`error.type = job-processing-retried`): SQS does not reset `SentTimestamp`, so
+- **redelivery** (`error.type = processing-retried`): SQS does not reset `SentTimestamp`, so
   this is the message's *total age*: it spans the failed attempt(s) and their
   `SQS_VISIBILITY_TIMEOUT` waits. Kept as its own series so it never pollutes the first-pickup
   percentiles; it quantifies how far behind a job that needed retries has fallen.
