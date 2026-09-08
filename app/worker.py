@@ -12,6 +12,7 @@ import logging
 import signal
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from opentelemetry import trace
@@ -28,6 +29,12 @@ from app.config.settings import (
 )
 from app.helpers.dynamo_db import get_print_job, update_job_status
 from app.helpers.gpu_info import log_gpu_info
+from app.helpers.metrics import (
+    ErrorType,
+    record_message_consumed,
+    record_process_duration,
+    record_queue_duration,
+)
 from app.helpers.otel import initialize_otel, shutdown_otel, traced
 from app.helpers.printing import ChromeBrowserManager, RenderingError
 from app.helpers.s3 import upload_pdf
@@ -55,6 +62,28 @@ def _handle_signal(signum: int, _frame: object) -> None:
     global _shutdown  # noqa: PLW0603
     logger.info("Received signal %d, shutting down gracefully...", signum)
     _shutdown = True
+
+
+def _seconds_since_sent(sent_timestamp: str | None) -> float:
+    """Seconds since a message was sent to SQS, from its ``SentTimestamp`` (epoch ms).
+
+    SQS always sets ``SentTimestamp`` and so does moto, so a missing or
+    non-numeric value can only be a code regression that dropped it from the
+    ``receive_message`` ``AttributeNames``. Fail fast: every message would hit
+    this, and a silently empty queue-duration metric is worse discovered late.
+    Clamped at 0 to absorb clock skew between the API host and this one.
+    """
+    if sent_timestamp is None:
+        raise RuntimeError(
+            "SQS message has no SentTimestamp attribute: Check the receive_message AttributeNames"
+        )
+    try:
+        sent_ms = int(sent_timestamp)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"SQS SentTimestamp {sent_timestamp!r} is not an epoch-ms integer"
+        ) from exc
+    return max(0.0, time.time() - sent_ms / 1000)
 
 
 @traced("worker.process_job")
@@ -100,6 +129,7 @@ def handle_message(
     """
     trace.get_current_span().set_attribute("job.id", job_id)
     trace.get_current_span().set_attribute("messaging.receive_count", receive_count)
+    start = time.perf_counter()
     try:
         pdf_location = process_job(job, browser)
         # The PDF lives at a deterministic key ({prefix}/{job_id}.pdf), so we only
@@ -111,6 +141,9 @@ def handle_message(
             finished_timestamp_iso_8601=get_iso_8601_timestamp(),
         )
         delete_message(receipt_handle, get_queue_url())
+        elapsed = time.perf_counter() - start
+        record_message_consumed()
+        record_process_duration(elapsed)
         logger.info("Job %s completed successfully (pdf uploaded to %s)", job_id, pdf_location)
     except (RenderingError, KeyError) as exc:
         # Job-level failure: the job itself is bad (unrenderable or malformed
@@ -118,15 +151,27 @@ def handle_message(
         # the job 'error' on the final attempt. Infrastructure errors (AWS
         # ClientError/timeouts, etc.) are deliberately NOT caught here. They
         # propagate and crash the worker so the orchestrator restarts it.
-        logger.exception("Job %s failed during processing", job_id)
+        elapsed = time.perf_counter() - start
+        # Expected, fully-classified failure: one ERROR line, not a traceback
+        # (the unexpected Playwright path in printing.py keeps its traceback).
+        reason = f"malformed payload, missing key {exc}" if isinstance(exc, KeyError) else str(exc)
+        logger.error("Job %s failed: %s", job_id, reason)  # noqa: TRY400
         trace.get_current_span().set_status(StatusCode.ERROR, str(exc))
-        if receive_count >= SQS_MAX_RECEIVE_COUNT:
+        final_attempt = receive_count >= SQS_MAX_RECEIVE_COUNT
+        record_process_duration(
+            elapsed,
+            error_type=ErrorType.PROCESSING_FAILED
+            if final_attempt
+            else ErrorType.PROCESSING_RETRIED,
+        )
+        if final_attempt:
             update_job_status(
                 job_id,
                 "error",
                 finished_timestamp_iso_8601=get_iso_8601_timestamp(),
                 message="Internal rendering error",
             )
+            record_message_consumed(error_type=ErrorType.PROCESSING_RETRIES_EXCEEDED)
             # Do not delete — let the visibility timeout expire so SQS
             # moves the message to the DLQ via the redrive policy.
 
@@ -190,6 +235,14 @@ def run() -> None:
                         receive_count: int = int(
                             message.get("Attributes", {}).get("ApproximateReceiveCount", 1)
                         )
+                        # First delivery: "now - SentTimestamp" is the clean queue
+                        # wait. On a redelivery SentTimestamp is unchanged, so it
+                        # is the message's age across the retry cycle — recorded
+                        # under error.type=processing-retried as its own series.
+                        record_queue_duration(
+                            _seconds_since_sent(message.get("Attributes", {}).get("SentTimestamp")),
+                            error_type=ErrorType.PROCESSING_RETRIED if receive_count > 1 else None,
+                        )
                         try:
                             job = parse_message_body(message)
                             job_id: str = job["job_id"]
@@ -245,7 +298,7 @@ if __name__ == "__main__":
         log_gpu_info()
         sys.exit(0)
 
-    trace_provider, logger_provider = initialize_otel()
+    trace_provider, logger_provider, meter_provider = initialize_otel()
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -256,4 +309,4 @@ if __name__ == "__main__":
         logger.exception("Unhandled exception in worker")
         sys.exit(1)
     finally:
-        shutdown_otel(trace_provider, logger_provider)
+        shutdown_otel(trace_provider, logger_provider, meter_provider)

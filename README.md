@@ -17,12 +17,16 @@
   - [Run](#run)
   - [Test](#test)
 - [Deployment configuration](#deployment-configuration)
+  - [Read-only root filesystem](#read-only-root-filesystem)
   - [Kubernetes probes](#kubernetes-probes)
   - [Observability](#observability)
     - [Logging implementation](#logging-implementation)
+    - [Metrics](#metrics)
+      - [Example queries](#example-queries)
     - [Local OTEL testing](#local-otel-testing)
 - [Debugging](#debugging)
   - [WebGL renderer info](#webgl-renderer-info)
+  - [Fix, if the web app on dev is not working](#fix-if-the-web-app-on-dev-is-not-working)
 
 ## Summary Of The Project
 
@@ -194,41 +198,140 @@ test $(( $(date +%s) - $(date +%s -r /tmp/liveness_probe) )) -lt 60 && echo "ali
 
 ### Observability
 
-The worker exports **traces** via OpenTelemetry (OTLP) by default, and can also export
-**logs** via OTLP when the OTEL logging config is used (see
-[Logging implementation](#logging-implementation)); metrics are not implemented yet. With
-`OTEL_ENABLE_BOTOCORE=true`, every DynamoDB, SQS, and S3 call is also captured as a span.
+The worker exports **traces** and **metrics** via OpenTelemetry (OTLP) by default, and can also
+export **logs** via OTLP when the OTEL logging config is used (see
+[Logging implementation](#logging-implementation)). With `OTEL_ENABLE_BOTOCORE=true`, every
+DynamoDB, SQS, and S3 call is also captured as a span. The service's custom metrics are
+described under [Metrics](#metrics).
 
 | Env | Default | Description |
 | --- | ------- | ----------- |
 | `OTEL_SDK_DISABLED` | `false` | Set to `true` to disable all OTEL instrumentation |
+| `OTEL_ENABLE_METRICS` | `true` | Set to `false` to disable OTLP metrics export |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `60000` | Metric export interval in ms (read straight from the env by the OTEL SDK; only relevant when metrics are enabled) |
+| `OTEL_METRIC_EXPORT_TIMEOUT` | `30000` | Metric export timeout in ms (read straight from the env by the OTEL SDK; only relevant when metrics are enabled) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP gRPC endpoint of the collector |
 | `OTEL_EXPORTER_OTLP_INSECURE` | `false` | Set to `true` for an insecure (non-TLS) connection. Required for a plaintext local collector |
 | `OTEL_EXPORTER_OTLP_HEADERS` | - | Optional headers for the OTLP collector (e.g. for authentication) |
-| `OTEL_RESOURCE_ATTRIBUTES` | - | Resource attributes attached to all telemetry (e.g. `service.name=service-print-renderer`) |
+| `OTEL_RESOURCE_ATTRIBUTES` | - | Extra resource attributes attached to all telemetry. |
 
 #### Logging implementation
 
 When the OTEL logging config (`app/config/logging-cfg-otel.yaml`) is used, logs are exported
 through the OpenTelemetry `LoggerProvider` (the `otel` handler).
 
+#### Metrics
+
+The meter provider is set up in [app/helpers/otel.py](app/helpers/otel.py) and exports via OTLP
+alongside traces and logs. Instruments are defined in
+[app/helpers/metrics.py](app/helpers/metrics.py) (`scope.name = app.helpers.metrics`,
+`scope.version = 1.0.0`); bump `METRICS_SCHEMA_VERSION` on any schema change. Two follow the
+OpenTelemetry [semantic conventions for messaging
+metrics](https://opentelemetry.io/docs/specs/semconv/messaging/messaging-metrics/); the third is
+custom because the conventions model has no queue-wait instrument. All three reuse the convention's
+attribute keys.
+
+| Metric | Type | Unit | Attributes | Description |
+| --- | --- | --- | --- | --- |
+| `messaging.client.consumed.messages` | Counter | `{message}` | `messaging.operation.name = print`,<br>`messaging.system = aws_sqs`,<br>`error.type = processing-retries-exceeded` (permanent failures only) | Print jobs the renderer finished with. One message is one print job |
+| `messaging.process.duration` | Histogram | `s` | `messaging.operation.name = print`,<br>`messaging.system = aws_sqs`,<br>`error.type = processing-retried` (failed, will be retried) or `processing-failed` (failed, last attempt) | Time the renderer spent processing one message (render + upload). Excludes the queue wait |
+| `swissgeo.messaging.queue.duration` | Histogram | `s` | `messaging.operation.name = print`,<br>`messaging.system = aws_sqs`,<br>`error.type = processing-retried` (redeliveries only) | Time from a message being sent to SQS to it being received by the renderer |
+
+For the two semantic-convention instruments the name, unit and description are not written out as
+literals. They come from `opentelemetry-semantic-conventions`, so a spec update propagates on the
+next dependency bump. `messaging.operation.name` is the *domain* operation (`print`), not the SQS
+API call.
+
+`messaging.client.consumed.messages` is recorded **once per job, at its terminal outcome**: a
+successful render, or a permanent failure once the SQS redrive policy is exhausted
+(`ApproximateReceiveCount` reaches `SQS_MAX_RECEIVE_COUNT`), the latter carrying
+`error.type = processing-retries-exceeded`. Redeliveries in between are not counted, so the
+series without `error.type` is exactly the jobs that rendered successfully. Jobs that only ever
+hit infrastructure errors crash the worker and are redriven to the DLQ without being counted here.
+
+This pairs with the API's `messaging.client.sent.messages`: sent counts enqueue attempts,
+consumed counts jobs picked up and finished, so the two can be compared as rates.
+
+`messaging.process.duration` is measured with `time.perf_counter()` around the processing in
+`handle_message` and recorded **once per processing attempt** - a redelivered job adds a sample
+per attempt, so its `_count` is attempts (not distinct jobs) and `_sum` accumulates a job's total
+processing time across retries. A failed attempt carries `error.type = processing-retried`
+while it still has retries left, then `processing-failed` on the final attempt - so
+`processing-retried` is the time burned on work that gets redone.
+
+`swissgeo.messaging.queue.duration` is custom: the messaging conventions have no instrument for
+the time a message sat in the queue (`messaging.client.operation.duration` times the receive
+*call*, not the wait). It is `now - SentTimestamp` (the SQS system attribute, epoch ms), clamped
+at 0 for clock skew, recorded **once per delivery**:
+
+- **first delivery** (no `error.type`): The clean queue wait, sent as first pickup.
+- **redelivery** (`error.type = processing-retried`): SQS does not reset `SentTimestamp`, so
+  this is the message's *total age*: it spans the failed attempt(s) and their
+  `SQS_VISIBILITY_TIMEOUT` waits. Kept as its own series so it never pollutes the first-pickup
+  percentiles; it quantifies how far behind a job that needed retries has fallen.
+
+A CloudWatch `ApproximateAgeOfOldestMessage` alarm still has its place as this metric goes quiet
+exactly when nothing is being consumed.
+
+##### Example queries
+
+Locally, `make start-otel` also brings up **Prometheus** (<http://localhost:9090>) so metrics can
+be queried and graphed — the OTLP collector only has a debug (log-dump) exporter otherwise.
+Prometheus does not scrape the worker: the collector *pushes* metrics into Prometheus' native
+OTLP receiver, so instrument names, units and attributes arrive unchanged.
+
+OTEL names are rewritten on the way in: `.` becomes `_`, counters gain `_total`, histograms are
+split into `_bucket` / `_count` / `_sum`, and annotation units (`{message}`) are dropped while
+`s` becomes a `_seconds` suffix. So the metrics above are
+`messaging_client_consumed_messages_total`, `messaging_process_duration_seconds_*` and
+`swissgeo_messaging_queue_duration_seconds_*`. Both `service-print` processes share the
+label `job="service-print"` (from `service.name`); `otel_scope_name="app.helpers.metrics"`
+isolates the renderer's instruments from the API's.
+
+```promql
+# Raw count since the process started. Use this to check a job was counted at all
+messaging_client_consumed_messages_total{otel_scope_name="app.helpers.metrics"}
+
+# Print jobs rendered successfully, per second
+sum(rate(messaging_client_consumed_messages_total{
+  otel_scope_name="app.helpers.metrics", error_type=""}[5m]))
+
+# Permanent-failure ratio (jobs that exhausted their SQS retries)
+  sum(rate(messaging_client_consumed_messages_total{otel_scope_name="app.helpers.metrics", error_type!=""}[5m]))
+/ sum(rate(messaging_client_consumed_messages_total{otel_scope_name="app.helpers.metrics"}[5m]))
+
+# p95 processing time over 1m (render + upload), successful attempts
+histogram_quantile(0.95, sum by (le) (rate(
+  messaging_process_duration_seconds_bucket{
+    otel_scope_name="app.helpers.metrics", error_type=""}[1m])))
+
+# p95 queue wait over 1m (first pickup — exclude the retry-cycle series)
+histogram_quantile(0.95, sum by (le) (rate(
+  swissgeo_messaging_queue_duration_seconds_bucket{
+    otel_scope_name="app.helpers.metrics", error_type=""}[1m])))
+```
+
 #### Local OTEL testing
 
-1. Start the local OTEL collector and Jaeger:
+1. Start the local OTEL collector, Jaeger and Prometheus:
 
    ```bash
    make start-otel
    ```
 
-2. Run the worker. Traces export by default; to also export logs via OTLP, point
+2. Run the worker. Traces and metrics export by default; to also export logs via OTLP, point
    `LOGGING_CFG` at the OTEL logging config:
 
    ```bash
    LOGGING_CFG=app/config/logging-cfg-otel.yaml make run
    ```
 
-View the full traces in the Jaeger UI at **<http://localhost:16686>**. Stop the stack with
-`make stop-otel`.
+View the full traces in the Jaeger UI at **<http://localhost:16686>** and metrics in the
+Prometheus UI at **<http://localhost:9090>**. Stop the stack with `make stop-otel`.
+
+> The OTEL stack (collector, Jaeger, Prometheus) is shared with `service-print-api` via the
+> `service-print-local-otel` compose project — the compose file is identical in both repos, so
+> `make start-otel` from either service brings up (or reuses) the same containers.
 
 ## Debugging
 
@@ -242,3 +345,32 @@ make renderer-info
 ```
 
 This launches a headless Chrome instance, evaluates a WebGL probe, logs the hardware-acceleration status and the renderer name, then exits. No queue polling or AWS calls are made.
+
+### Fix, if the web app on dev is not working
+
+nginx, one config file: Every request (any path, query, method) returns the same 200 HTML that fires gaMapReady:
+
+```bash
+# dummy-portal.conf
+server {
+    listen 80 default_server;
+    location / {
+        default_type text/html;
+        return 200 '<!doctype html><html><head><meta charset="utf-8"><title>dummy print</title></head><body><h1>dummy print page</h1><script>window.postMessage({type:"gaMapReady"},"*");</script></body></html>';
+    }
+}
+```
+
+edit `.env`:
+
+```bash
+PORTAL_URL=http://localhost:8090/?
+```
+
+Run it:
+
+```bash
+docker run -d --name dummy-portal -p 8090:80 \
+  -v "$PWD/dummy-portal.conf:/etc/nginx/conf.d/default.conf:ro" \
+  nginx:alpine
+```
