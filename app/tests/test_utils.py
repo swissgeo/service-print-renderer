@@ -1,6 +1,10 @@
 import datetime
+import errno
+from pathlib import Path
 
-from app.helpers.utils import get_iso_8601_timestamp, touch_probe_file
+import pytest
+
+from app.helpers.utils import ensure_writable_dir, get_iso_8601_timestamp, touch_probe_file
 
 
 def test_get_iso_8601_timestamp_format():
@@ -33,3 +37,30 @@ def test_touch_probe_file_touches_existing_file(tmp_path):
     probe.write_text("old")
     touch_probe_file(str(probe))
     assert probe.read_text() == "old"
+
+
+def test_ensure_writable_dir_creates_missing_directory(tmp_path):
+    scratch = tmp_path / "scratch" / "nested"
+    ensure_writable_dir(str(scratch))
+    assert scratch.is_dir()
+
+
+def test_ensure_writable_dir_leaves_no_leftover_file(tmp_path):
+    ensure_writable_dir(str(tmp_path))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_ensure_writable_dir_raises_on_read_only_filesystem(tmp_path, monkeypatch):
+    def _read_only_touch(*_args, **_kwargs) -> None:
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    monkeypatch.setattr(Path, "touch", _read_only_touch)
+    with pytest.raises(RuntimeError, match="not writable"):
+        ensure_writable_dir(str(tmp_path))
+
+
+def test_ensure_writable_dir_raises_when_path_is_a_file(tmp_path):
+    not_a_dir = tmp_path / "regular_file"
+    not_a_dir.write_text("")
+    with pytest.raises(RuntimeError, match="not writable"):
+        ensure_writable_dir(str(not_a_dir / "scratch"))

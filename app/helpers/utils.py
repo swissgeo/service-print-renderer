@@ -52,6 +52,29 @@ def get_iso_8601_timestamp() -> str:
     return now_utc.isoformat()
 
 
+def ensure_writable_dir(dir_path: str) -> None:
+    """Create the directory if needed and verify it is writable.
+
+    Raises:
+        RuntimeError: If the directory cannot be created or written to. Failing
+            here keeps the read-only-filesystem case from surfacing later as an
+            opaque Playwright/Chrome error.
+    """
+    path = Path(dir_path)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / f".write_check_{os.getpid()}"
+        probe.touch()
+        probe.unlink()
+    except OSError as exc:
+        msg = (
+            f"Scratch directory '{dir_path}' is not writable: {exc}. "
+            "Mount a writable volume there, or set TMP_DIR to a writable path."
+        )
+        raise RuntimeError(msg) from exc
+    logger.debug("Scratch directory is writable: %s", dir_path)
+
+
 def touch_probe_file(file_path: str) -> None:
     """Create or touch a probe file to signal readiness or liveness."""
     if not file_path:

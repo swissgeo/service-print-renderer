@@ -23,6 +23,7 @@ from app.config.settings import (
 # TYPE_CHECKING: Importing it at runtime would raise ImportError.
 if TYPE_CHECKING:
     from mypy_boto3_sqs import SQSClient
+    from mypy_boto3_sqs.type_defs import MessageTypeDef
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ def get_queue_url() -> str:
     return sqs.get_queue_url(QueueName=SQS_QUEUE_NAME)["QueueUrl"]
 
 
-def receive_messages(queue_url: str, wait_time_seconds: int) -> list[dict[str, Any]]:
+def receive_messages(queue_url: str, wait_time_seconds: int) -> list[MessageTypeDef]:
     """
     Polls an SQS queue for messages using long polling.
 
@@ -72,7 +73,8 @@ def receive_messages(queue_url: str, wait_time_seconds: int) -> list[dict[str, A
 
     Returns a list of raw SQS message dicts. Each message contains at least
     'Body' (JSON string of the job item), 'ReceiptHandle' (needed for deletion),
-    and 'Attributes' including 'ApproximateReceiveCount'.
+    and 'Attributes' including 'ApproximateReceiveCount' and 'SentTimestamp'
+    (epoch ms the message entered the queue, used for the queue-wait metric).
     """
     sqs = get_sqs_client()
     try:
@@ -80,7 +82,7 @@ def receive_messages(queue_url: str, wait_time_seconds: int) -> list[dict[str, A
             QueueUrl=queue_url,
             MaxNumberOfMessages=SQS_MAX_MESSAGES,
             WaitTimeSeconds=wait_time_seconds,
-            AttributeNames=["ApproximateReceiveCount"],
+            AttributeNames=["ApproximateReceiveCount", "SentTimestamp"],
         )
         messages = response.get("Messages", [])
         logger.debug("Received %d message(s) from SQS queue %s", len(messages), queue_url)
@@ -93,7 +95,7 @@ def receive_messages(queue_url: str, wait_time_seconds: int) -> list[dict[str, A
     except ClientError:
         logger.exception("Error receiving messages from SQS queue %s", queue_url)
         raise
-    return messages  # type: ignore[return-value]
+    return messages
 
 
 def delete_message(receipt_handle: str, queue_url: str) -> None:
@@ -126,6 +128,6 @@ def get_dlq_url() -> str:
     return sqs.get_queue_url(QueueName=SQS_DL_QUEUE_NAME)["QueueUrl"]
 
 
-def parse_message_body(message: dict[str, Any]) -> dict[str, Any]:
+def parse_message_body(message: MessageTypeDef) -> dict[str, Any]:
     """Deserializes the JSON body of an SQS message into a dict."""
     return dict(json.loads(message["Body"]))

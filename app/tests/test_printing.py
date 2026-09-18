@@ -3,7 +3,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from app.helpers.printing import _TEMPORARY_Z, ChromeBrowserManager
+from app.helpers.printing import ChromeBrowserManager
 
 _PAYLOAD = {
     "print_format": "a4",
@@ -51,13 +51,6 @@ def test_build_url_carries_state_and_print_params(monkeypatch):
     assert qs["print_resolution"] == ["96"]
     assert qs["print_orientation"] == ["portrait"]
     assert qs["print_scale"] == ["50000"]
-
-
-def test_build_url_sends_temporary_fixed_z(monkeypatch):
-    # TODO: remove with _TEMPORARY_Z once the web-portal derives zoom from print_scale.
-    monkeypatch.setattr("app.helpers.printing.PORTAL_URL", "https://www.dev.sgdi.tech/?")
-    qs = parse_qs(urlparse(ChromeBrowserManager()._build_url(_PAYLOAD)).query)
-    assert qs["z"] == [str(_TEMPORARY_Z)]
 
 
 def test_build_url_state_id_renamed_to_state(monkeypatch):
