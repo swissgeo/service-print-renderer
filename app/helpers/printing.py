@@ -198,11 +198,17 @@ class ChromeBrowserManager:
                             time.sleep(0.5)
                         else:
                             raise
-                # goto() does not raise on HTTP error statuses, and gaMapReady never
-                # fires when the portal errors - fail fast instead of waiting for the
-                # gaMapReady timeout below.
-                if response is not None and not response.ok:
-                    raise RenderingError(f"web-portal returned HTTP {response.status} for {url}")
+            # goto() does not raise on HTTP error statuses, and gaMapReady never
+            # fires when the portal errors - fail fast instead of waiting for the
+            # gaMapReady timeout below.
+            if response is not None and not response.ok:
+                raise RenderingError(f"web-portal returned HTTP {response.status} for {url}")
+
+            # Timed separately from the navigation: both wait up to
+            # TIMEOUT_LOADING_WEB_PAGE, so a single timer cannot say whether the portal
+            # failed to deliver the page or delivered it and the map never became ready.
+            # Those are different faults with different owners.
+            with _timed("wait_for_map_ready"):
                 page.wait_for_function(
                     "() => window.__GA_MAP_READY__ === true",
                     timeout=TIMEOUT_LOADING_WEB_PAGE,
