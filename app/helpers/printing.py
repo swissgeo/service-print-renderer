@@ -9,6 +9,7 @@ from types import TracebackType
 from typing import Self
 from urllib.parse import urlencode
 
+from opentelemetry import trace
 from playwright.sync_api import (
     Browser,
     BrowserContext,
@@ -18,6 +19,7 @@ from playwright.sync_api import (
     Response,
     sync_playwright,
 )
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from app.config.settings import (
     BROWSER_LAUNCH_ARGS,
@@ -25,6 +27,7 @@ from app.config.settings import (
     PORTAL_URL,
     TIMEOUT_LOADING_WEB_PAGE,
 )
+from app.helpers.metrics import ErrorType, RenderPhase, record_render_duration
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +47,34 @@ _CHROME_EXECUTABLE = "/usr/bin/google-chrome"
 
 
 @contextlib.contextmanager
-def _timed(label: str) -> Generator:
-    """Log the elapsed wall-clock time of the wrapped block at DEBUG level."""
-    start = time.perf_counter()
-    try:
-        yield
-    finally:
-        elapsed = time.perf_counter() - start
-        logger.debug("%s took %.3fs", label, elapsed)
+def _timed(label: str, phase: RenderPhase | None = None) -> Generator:
+    """Log the elapsed wall-clock time of the wrapped block at DEBUG level.
+
+    With a ``phase``, the block is also traced as a ``render.<phase>`` span and
+    recorded in the render-duration metric, so a single slow job can be broken
+    down in the trace and the distribution under load read from the metric.
+    """
+    span = (
+        trace.get_tracer(__name__).start_as_current_span(f"render.{phase}", record_exception=False)
+        if phase is not None
+        else contextlib.nullcontext()
+    )
+    error_type: ErrorType | None = None
+    with span:
+        start = time.perf_counter()
+        try:
+            yield
+        except PlaywrightTimeoutError:
+            error_type = ErrorType.RENDER_TIMEOUT
+            raise
+        except Exception:
+            error_type = ErrorType.RENDER_ERROR
+            raise
+        finally:
+            elapsed = time.perf_counter() - start
+            logger.debug("%s took %.3fs", label, elapsed)
+            if phase is not None:
+                record_render_duration(phase, elapsed, error_type)
 
 
 def _format_query_value(value: object) -> str:
@@ -180,7 +203,7 @@ class ChromeBrowserManager:
             """)
 
             logger.info("Navigating to %s", url)
-            with _timed("navigate_to_url"):
+            with _timed("navigate_to_url", RenderPhase.NAVIGATE):
                 response: Response | None = None
                 for attempt in range(BROWSER_NAVIGATION_RETRIES):
                     try:
@@ -208,7 +231,7 @@ class ChromeBrowserManager:
             # TIMEOUT_LOADING_WEB_PAGE, so a single timer cannot say whether the portal
             # failed to deliver the page or delivered it and the map never became ready.
             # Those are different faults with different owners.
-            with _timed("wait_for_map_ready"):
+            with _timed("wait_for_map_ready", RenderPhase.MAP_READY):
                 page.wait_for_function(
                     "() => window.__GA_MAP_READY__ === true",
                     timeout=TIMEOUT_LOADING_WEB_PAGE,
@@ -222,7 +245,7 @@ class ChromeBrowserManager:
             dpi = float(payload["print_resolution"])
             scale = 96 / dpi
             logger.info("Saving PDF to %s", output_path)
-            with _timed("save_page_as_pdf"):
+            with _timed("save_page_as_pdf", RenderPhase.PDF):
                 page.emulate_media(media="print")
                 page.pdf(
                     path=str(output_path),

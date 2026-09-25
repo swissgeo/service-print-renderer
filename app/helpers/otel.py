@@ -18,11 +18,14 @@ from opentelemetry.sdk.metrics.export import (
     MetricExporter,
     PeriodicExportingMetricReader,
 )
+from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SpanExporter
+from opentelemetry.semconv._incubating.metrics.messaging_metrics import MESSAGING_PROCESS_DURATION
 from opentelemetry.trace import SpanKind
 
+from app.helpers import metrics as app_metrics
 from app.helpers.utils import init_logging, strtobool
 
 _RESOURCE = Resource.create({"service.name": "service-print"})
@@ -161,9 +164,22 @@ def _setup_meter_provider() -> MeterProvider | None:
     provider = MeterProvider(
         resource=_RESOURCE,
         metric_readers=[PeriodicExportingMetricReader(exporter)],
+        views=[
+            _bucket_view(MESSAGING_PROCESS_DURATION, app_metrics.PROCESS_DURATION_BUCKETS),
+            _bucket_view(app_metrics.QUEUE_DURATION, app_metrics.QUEUE_DURATION_BUCKETS),
+            _bucket_view(app_metrics.RENDER_DURATION, app_metrics.RENDER_DURATION_BUCKETS),
+        ],
     )
     metrics.set_meter_provider(provider)
     return provider
+
+
+def _bucket_view(instrument_name: str, boundaries: tuple[float, ...]) -> View:
+    return View(
+        instrument_name=instrument_name,
+        meter_name=app_metrics.meter.name,
+        aggregation=ExplicitBucketHistogramAggregation(boundaries=boundaries),
+    )
 
 
 def _setup_logger_provider() -> LoggerProvider | None:
