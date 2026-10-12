@@ -227,20 +227,28 @@ alongside traces and logs. Instruments are defined in
 [app/helpers/metrics.py](app/helpers/metrics.py) (`scope.name = app.helpers.metrics`,
 `scope.version = 1.0.0`); bump `METRICS_SCHEMA_VERSION` on any schema change. Two follow the
 OpenTelemetry [semantic conventions for messaging
-metrics](https://opentelemetry.io/docs/specs/semconv/messaging/messaging-metrics/); the third is
-custom because the conventions model has no queue-wait instrument. All three reuse the convention's
-attribute keys.
+metrics](https://opentelemetry.io/docs/specs/semconv/messaging/messaging-metrics/); the other two
+are custom because the conventions have no queue-wait or rendering instrument. All reuse the
+conventions' attribute keys where one exists.
 
 | Metric | Type | Unit | Attributes | Description |
 | --- | --- | --- | --- | --- |
 | `messaging.client.consumed.messages` | Counter | `{message}` | `messaging.operation.name = print`,<br>`messaging.system = aws_sqs`,<br>`error.type = processing-retries-exceeded` (permanent failures only) | Print jobs the renderer finished with. One message is one print job |
 | `messaging.process.duration` | Histogram | `s` | `messaging.operation.name = print`,<br>`messaging.system = aws_sqs`,<br>`error.type = processing-retried` (failed, will be retried) or `processing-failed` (failed, last attempt) | Time the renderer spent processing one message (render + upload). Excludes the queue wait |
 | `swissgeo.messaging.queue.duration` | Histogram | `s` | `messaging.operation.name = print`,<br>`messaging.system = aws_sqs`,<br>`error.type = processing-retried` (redeliveries only) | Time from a message being sent to SQS to it being received by the renderer |
+| `swissgeo.service_print.render.duration` | Histogram | `s` | `swissgeo.render.phase = navigate`, `map_ready` or `pdf`,<br>`error.type = render-timeout` or `render-error` (failed phase only) | Time one phase of the render took in headless Chrome |
 
 For the two semantic-convention instruments the name, unit and description are not written out as
 literals. They come from `opentelemetry-semantic-conventions`, so a spec update propagates on the
 next dependency bump. `messaging.operation.name` is the *domain* operation (`print`), not the SQS
 API call.
+
+Both histograms use explicit bucket boundaries (`PROCESS_DURATION_BUCKETS` and
+`QUEUE_DURATION_BUCKETS` in [app/helpers/metrics.py](app/helpers/metrics.py), applied as SDK
+views in [app/helpers/otel.py](app/helpers/otel.py)). The SDK default (`0, 5, 10, 25, 50, …`) is
+sized for milliseconds and would put every render between 25s and 50s into one bucket. The Elastic
+ingest converts the histograms to `exponential_histogram` by placing every sample at its bucket's
+midpoint, so a percentile in Kibana is only as precise as the bucket it falls in.
 
 `messaging.client.consumed.messages` is recorded **once per job, at its terminal outcome**: a
 successful render, or a permanent failure once the SQS redrive policy is exhausted
@@ -273,6 +281,19 @@ at 0 for clock skew, recorded **once per delivery**:
 A CloudWatch `ApproximateAgeOfOldestMessage` alarm still has its place as this metric goes quiet
 exactly when nothing is being consumed.
 
+`swissgeo.service_print.render.duration` splits the render into its sequential phases, recorded
+**once per phase and processing attempt**:
+
+- `navigate`: `page.goto()` until the web-portal delivered the print page.
+- `map_ready`: waiting for the page to post `gaMapReady`, i.e. for its layer definitions and tiles.
+- `pdf`: generating the PDF.
+
+`navigate` and `map_ready` each wait up to `TIMEOUT_LOADING_WEB_PAGE`, so a slow or failed render
+could come from either. A failed attempt only has samples up to the phase that failed, and that
+phase carries `error.type = render-timeout` (it ran into the timeout) or `render-error`. The
+phases are also traced as `render.<phase>` spans under `worker.process_job`, to break down a single
+slow job in the trace.
+
 ##### Example queries
 
 Locally, `make start-otel` also brings up **Prometheus** (<http://localhost:9090>) so metrics can
@@ -283,8 +304,8 @@ OTLP receiver, so instrument names, units and attributes arrive unchanged.
 OTEL names are rewritten on the way in: `.` becomes `_`, counters gain `_total`, histograms are
 split into `_bucket` / `_count` / `_sum`, and annotation units (`{message}`) are dropped while
 `s` becomes a `_seconds` suffix. So the metrics above are
-`messaging_client_consumed_messages_total`, `messaging_process_duration_seconds_*` and
-`swissgeo_messaging_queue_duration_seconds_*`. Both `service-print` processes share the
+`messaging_client_consumed_messages_total`, `messaging_process_duration_seconds_*`,
+`swissgeo_messaging_queue_duration_seconds_*` and `swissgeo_service_print_render_duration_seconds_*`. Both `service-print` processes share the
 label `job="service-print"` (from `service.name`); `otel_scope_name="app.helpers.metrics"`
 isolates the renderer's instruments from the API's.
 
@@ -309,6 +330,16 @@ histogram_quantile(0.95, sum by (le) (rate(
 histogram_quantile(0.95, sum by (le) (rate(
   swissgeo_messaging_queue_duration_seconds_bucket{
     otel_scope_name="app.helpers.metrics", error_type=""}[1m])))
+
+# p95 per render phase over 5m, successful phases
+histogram_quantile(0.95, sum by (le, swissgeo_render_phase) (rate(
+  swissgeo_service_print_render_duration_seconds_bucket{
+    otel_scope_name="app.helpers.metrics", error_type=""}[5m])))
+
+# Render timeouts per second, by the phase that timed out
+sum by (swissgeo_render_phase) (rate(
+  swissgeo_service_print_render_duration_seconds_count{
+    otel_scope_name="app.helpers.metrics", error_type="render-timeout"}[5m]))
 ```
 
 #### Local OTEL testing

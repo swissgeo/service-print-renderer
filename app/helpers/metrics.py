@@ -36,6 +36,23 @@ class ErrorType(StrEnum):
     PROCESSING_FAILED = "processing-failed"
     # The job failed for good, having exhausted the SQS redrive policy.
     PROCESSING_RETRIES_EXCEEDED = "processing-retries-exceeded"
+    # A render phase ran into TIMEOUT_LOADING_WEB_PAGE.
+    RENDER_TIMEOUT = "render-timeout"
+    # A render phase failed for any other reason.
+    RENDER_ERROR = "render-error"
+
+
+class RenderPhase(StrEnum):
+    """Allowed values for the ``swissgeo.render.phase`` metric attribute.
+
+    The phases are sequential and together make up the render, so they are
+    kept apart: the page not being delivered (portal) and the map never becoming
+    ready (layer and tile backends) are different faults with different owners.
+    """
+
+    NAVIGATE = "navigate"
+    MAP_READY = "map_ready"
+    PDF = "pdf"
 
 
 # Emits "messaging.client.consumed.messages" ({message}) and
@@ -45,13 +62,43 @@ class ErrorType(StrEnum):
 _consumed_messages = create_messaging_client_consumed_messages(meter)
 _process_duration = create_messaging_process_duration(meter)
 
+# Explicit bucket boundaries (s), applied as SDK views in app.helpers.otel. The SDK
+# default (0, 5, 10, 25, 50, ...) is sized for milliseconds, and the semconv
+# advisory for messaging.process.duration stops at 10s, below the 30s
+# TIMEOUT_LOADING_WEB_PAGE a slow render runs into. The Elastic ingest places
+# every sample at its bucket's midpoint, so the buckets are dense where renders
+# and timeouts land.
+PROCESS_DURATION_BUCKETS = (
+    0.5, 1, 2, 3, 4, 5, 6, 8, 10, 12.5, 15, 20, 25, 30, 35, 40, 50, 60, 90, 120,
+)  # fmt: skip
+# A redelivery's queue duration spans SQS_VISIBILITY_TIMEOUT waits, hence the
+# long tail.
+QUEUE_DURATION_BUCKETS = (
+    0.1, 0.25, 0.5, 1, 2.5, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1800, 3600,
+)  # fmt: skip
+# A single phase is capped by the 30s TIMEOUT_LOADING_WEB_PAGE; a timeout lands in
+# (30, 35]. PDF generation takes well under a second, hence the fine low end.
+RENDER_DURATION_BUCKETS = (
+    0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5, 6, 8, 10, 15, 20, 25, 30, 35, 45, 60,
+)  # fmt: skip
+
+# Emits "swissgeo.service_print.render.duration" (s).
+# Custom because no OTEL namespace covers rendering a page in a browser.
+RENDER_DURATION = "swissgeo.service_print.render.duration"
+_render_duration = meter.create_histogram(
+    name=RENDER_DURATION,
+    unit="s",
+    description="Time one phase of rendering a print job in headless Chrome took.",
+)
+
 # Emits "swissgeo.messaging.queue.duration" (s).
 # Custom because the messaging semantic conventions have no instrument for the
 # time a message sat in the queue: messaging.client.operation.duration measures
 # the receive *call*, not the wait. swissgeo.messaging.* is the ADD's form for a
 # metric that fits an OTEL namespace but is not defined by the spec.
+QUEUE_DURATION = "swissgeo.messaging.queue.duration"
 _queue_duration = meter.create_histogram(
-    name="swissgeo.messaging.queue.duration",
+    name=QUEUE_DURATION,
     unit="s",
     description=(
         "Time from a message being sent to the SQS queue to it being received by "
@@ -112,3 +159,20 @@ def record_queue_duration(seconds: float, error_type: ErrorType | None = None) -
         attributes = attributes | {error_attributes.ERROR_TYPE: error_type}
 
     _queue_duration.record(seconds, attributes)
+
+
+def record_render_duration(
+    phase: RenderPhase, seconds: float, error_type: ErrorType | None = None
+) -> None:
+    """Record how long one render phase took.
+
+    Recorded once per phase and processing attempt, so a failed attempt only has
+    samples up to the phase that failed. That phase carries ``error.type``:
+    ``render-timeout`` when it ran into TIMEOUT_LOADING_WEB_PAGE, otherwise
+    ``render-error``.
+    """
+    attributes: dict[str, str] = {"swissgeo.render.phase": phase}
+    if error_type is not None:
+        attributes[error_attributes.ERROR_TYPE] = error_type
+
+    _render_duration.record(seconds, attributes)
