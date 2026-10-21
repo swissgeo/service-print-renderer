@@ -257,6 +257,10 @@ def run() -> None:
                         handle_message(job_id, receipt_handle, job, receive_count, browser)
                         jobs_processed += 1
 
+                # Leave the DLQ to a pod that is not shutting down.
+                if _shutdown:
+                    break
+
                 # Process DLQ messages. As with the main queue, receive_messages
                 # only raises infrastructure errors, which propagate and crash
                 # the worker rather than being swallowed and retried forever.
