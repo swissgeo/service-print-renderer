@@ -16,6 +16,7 @@ from app.config.settings import (
     SQS_DL_QUEUE_NAME,
     SQS_MAX_MESSAGES,
     SQS_QUEUE_NAME,
+    SQS_VISIBILITY_TIMEOUT,
 )
 
 # mypy_boto3_sqs ships with boto3-stubs, a dev-only dependency that is not
@@ -82,6 +83,7 @@ def receive_messages(queue_url: str, wait_time_seconds: int) -> list[MessageType
             QueueUrl=queue_url,
             MaxNumberOfMessages=SQS_MAX_MESSAGES,
             WaitTimeSeconds=wait_time_seconds,
+            VisibilityTimeout=SQS_VISIBILITY_TIMEOUT,
             AttributeNames=["ApproximateReceiveCount", "SentTimestamp"],
         )
         messages = response.get("Messages", [])
