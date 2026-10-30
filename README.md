@@ -34,6 +34,8 @@
 
 When `service-print-api` receives a print request from a client, it enqueues a job to SQS and returns a job ID. The renderer continuously polls that queue, picks up pending jobs one at a time, launches a headless Chrome browser via [Playwright](https://playwright.dev/python/), renders the web-portal page as a PDF, uploads it to S3 under the deterministic key `<S3_PDF_PREFIX>/<job_id>.pdf`, and updates the job status in DynamoDB to `finished`. The renderer does **not** store the PDF URL: because the S3 key is deterministic, `service-print-api` derives the PDF URL from the `job_id` once the status is `finished`. Clients can then query `service-print-api` with the job ID to check the status and retrieve the resulting document once it is ready.
 
+One SQS message is exactly one print job, by design: `service-print-api` sends every job as its own message, and the renderer reads a single `job_id` from each message body.
+
 Malformed SQS messages (unparseable body or missing `job_id`) are deleted directly from the main queue. Failed rendering jobs are not deleted — the worker lets the visibility timeout (`SQS_VISIBILITY_TIMEOUT`) expire so SQS redelivers the message and retries up to `SQS_MAX_RECEIVE_COUNT` times. Only on the final attempt is the job marked as `error` in DynamoDB; SQS then routes the message to the DLQ automatically via the redrive policy.
 
 ## Technologies
@@ -125,7 +127,7 @@ The service is configured entirely via environment variables:
 | `SQS_VISIBILITY_TIMEOUT` | `90` | How long (in seconds) a received message is hidden from other consumers; after expiry SQS redelivers it (or routes to DLQ if `maxReceiveCount` is reached). Must exceed the worst-case render time so a slow job is not redelivered while still processing |
 | `SQS_WAIT_TIME_SECONDS` | `20` | Long-polling wait time in seconds when reading from SQS |
 | `SQS_DLQ_WAIT_TIME_SECONDS` | `2` | Polling wait time in seconds when reading from SQS DLQ |
-| `SQS_MAX_MESSAGES` | `1` | Maximum number of messages to retrieve per SQS poll |
+| `SQS_MAX_MESSAGES` | `1` | Maximum number of messages (each one print job) to retrieve per SQS poll |
 | `S3_BUCKET_NAME` | `service-print-jobs-local` | S3 bucket where rendered PDFs are stored |
 | `S3_PDF_CACHE_CONTROL_MAX_AGE` | `3600` | TTL in seconds for the `Cache-Control: max-age` header set on PDFs uploaded to S3; controls how long CloudFront and browsers cache the PDF |
 | `PORTAL_URL` | - | web-portal endpoint (**required**). The per-job URL is built as `<PORTAL_URL without trailing /?>/<print_lang>/print?<query>`, e.g. `https://www.dev.sgdi.tech/en/print?state=…&z=4&print_format=a3&…` |
